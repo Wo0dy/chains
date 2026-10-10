@@ -74,16 +74,16 @@ class BaselineStore:
         self._counts: dict[tuple[str, str, Any, Any], int] = defaultdict(int)
 
     def seen(self, by: str, field: str, by_val: Any, val: Any) -> int:
-        return self._counts[(by, field, by_val, _hashable(val))]
+        return self._counts[(by, field, by_val, hashable(val))]
 
     def observe(self, event: Event, keys: list[tuple[str, str]]) -> None:
         for by, field in keys:
             by_val, val = event.get(by), event.get(field)
             if val is not None:
-                self._counts[(by, field, by_val, _hashable(val))] += 1
+                self._counts[(by, field, by_val, hashable(val))] += 1
 
 
-def _hashable(v: Any) -> Any:
+def hashable(v: Any) -> Any:
     return tuple(v) if isinstance(v, list) else v
 
 

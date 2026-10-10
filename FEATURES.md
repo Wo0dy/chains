@@ -59,7 +59,8 @@ Status: **Built** = working in this scaffold with tests · **Stub** = interface 
 | Actions: allow / alert / redact / require_approval / block | Built |
 | SOAR `response:` hints (isolate_host, kill_process_tree, open_case) | Built |
 | Confidence scored from matcher evidence | Built |
-| Absence / "not followed by" steps, counting aggregations | Planned |
+| Absence / "not followed by" steps (`absent: true`, mid-sequence or final with `within`) | Built |
+| Counting steps (`count: {min, within, distinct}`) | Built |
 
 ## 6. Verdicts and explainability
 | Feature | Status |
@@ -75,6 +76,7 @@ Status: **Built** = working in this scaffold with tests · **Stub** = interface 
 | `pre_tool_call` enforcement: raises `ToolBlocked` / `ApprovalRequired` | Built |
 | `@guard.tool` decorator to wrap any tool | Built |
 | Monitor-only mode (`enforce=False`) and verdict callback | Built |
+| `guard.tick()` / `engine.advance_time()` for clock-confirmed absence verdicts | Built |
 | Async evaluation for alert-only rules | Planned |
 | MCP proxy mode (Chain in front of any MCP server) | Planned |
 
@@ -95,7 +97,8 @@ Status: **Built** = working in this scaffold with tests · **Stub** = interface 
 | Mutation fuzzing with recall per technique (zero-width, homoglyph, case, base64, URL, caret, burying in a long document) | Built |
 | Pluggable LLM paraphrase mutator | Built (hook) |
 | CI gate: `chain fuzz --min-recall 0.9` | Built |
-| Replay against labeled historical data, precision/recall dashboards | Planned |
+| Replay against labeled historical data, precision/recall per rule (`chain replay`), CI gate | Built |
+| Precision/recall dashboards over time | Planned (CI stores `replay-report.json` per run) |
 
 ## 10. CLI
-`chain validate`, `chain test`, `chain fuzz`, `chain eval`, `chain import-sigma`, `chain import-yara` — all Built.
+`chain validate`, `chain test`, `chain fuzz`, `chain eval`, `chain replay`, `chain import-sigma`, `chain import-yara` — all Built.

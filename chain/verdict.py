@@ -31,6 +31,7 @@ class Hit:
 class Verdict:
     event_id: str
     hits: list[Hit] = field(default_factory=list)
+    deferred: bool = False   # produced by Engine.advance_time (an absence confirmed by the clock)
 
     @property
     def action(self) -> str:
@@ -62,6 +63,7 @@ class Verdict:
     def to_dict(self) -> dict[str, Any]:
         return {
             "event_id": self.event_id,
+            "deferred": self.deferred,
             "action": self.action,
             "severity": self.severity,
             "responses": self.responses,
@@ -71,11 +73,13 @@ class Verdict:
     def explain(self) -> str:
         if not self.hits:
             return f"[{self.event_id}] allow (no rules fired)"
-        lines = [f"[{self.event_id}] {self.action.upper()} severity={self.severity}"]
+        when = " (deferred: absence confirmed)" if self.deferred else ""
+        lines = [f"[{self.event_id}] {self.action.upper()} severity={self.severity}{when}"]
         for h in self.hits:
             lines.append(f"  rule {h.rule_id} ({h.severity}, conf {h.confidence:.2f}, tiers {','.join(h.tiers) or '-'})")
             for ev in h.evidence:
-                lines.append(f"    step {ev.step} <- {ev.event_type} {ev.event_id}")
+                src = f"{ev.event_type} {ev.event_id}" if ev.event_id else ev.event_type
+                lines.append(f"    step {ev.step} <- {src}")
                 for d in ev.details:
                     lines.append(f"      - {d}")
         return "\n".join(lines)

@@ -1,0 +1,47 @@
+id: classic_brute_force_then_success
+title: Burst of failed logins followed by a successful one
+description: >
+  Five or more failed logins for the same user within five minutes, then a
+  successful login for that user. Password guessing or spraying that worked.
+severity: high
+action: alert
+response: [reset_credentials, open_case]
+tags: [credential_access, attack:T1110]
+group_by: user
+window: {seconds: 900}
+sequence:
+  - name: failures
+    event: auth.login
+    where: {fields.outcome: failure}
+    count: {min: 5, within: 300}
+  - name: success
+    event: auth.login
+    where: {fields.outcome: success}
+tests:
+  - name: five failures then success
+    expect: fire
+    events:
+      - {type: auth.login, user: dana, ts: 1000, fields: {outcome: failure, src_ip: 203.0.113.9}}
+      - {type: auth.login, user: dana, ts: 1010, fields: {outcome: failure, src_ip: 203.0.113.9}}
+      - {type: auth.login, user: dana, ts: 1020, fields: {outcome: failure, src_ip: 203.0.113.9}}
+      - {type: auth.login, user: dana, ts: 1030, fields: {outcome: failure, src_ip: 203.0.113.9}}
+      - {type: auth.login, user: dana, ts: 1040, fields: {outcome: failure, src_ip: 203.0.113.9}}
+      - {type: auth.login, user: dana, ts: 1050, fields: {outcome: success, src_ip: 203.0.113.9}}
+  - name: failures spread over an hour
+    expect: no_fire
+    events:
+      - {type: auth.login, user: eli, ts: 0, fields: {outcome: failure}}
+      - {type: auth.login, user: eli, ts: 900, fields: {outcome: failure}}
+      - {type: auth.login, user: eli, ts: 1800, fields: {outcome: failure}}
+      - {type: auth.login, user: eli, ts: 2700, fields: {outcome: failure}}
+      - {type: auth.login, user: eli, ts: 3600, fields: {outcome: failure}}
+      - {type: auth.login, user: eli, ts: 3610, fields: {outcome: success}}
+  - name: failures for different users
+    expect: no_fire
+    events:
+      - {type: auth.login, user: u1, ts: 0, fields: {outcome: failure}}
+      - {type: auth.login, user: u2, ts: 5, fields: {outcome: failure}}
+      - {type: auth.login, user: u3, ts: 10, fields: {outcome: failure}}
+      - {type: auth.login, user: u4, ts: 15, fields: {outcome: failure}}
+      - {type: auth.login, user: u5, ts: 20, fields: {outcome: failure}}
+      - {type: auth.login, user: u5, ts: 25, fields: {outcome: success}}

@@ -20,7 +20,7 @@ Chain is a detection language and engine. It does what YARA, Sigma and Suricata 
 
 - **Meaning, not just strings.** Content is decoded and normalized before matching, then checked by a cost-ordered cascade: regex → semantic similarity → classifier → LLM judge. Paraphrased or obfuscated attacks still match.
 - **Provenance and taint.** Every event records what it read and what it produced. A rule can require that a process *descends from* a phishing attachment, or that an agent's tool call happens *after untrusted content entered its context*.
-- **Multi-step sequences.** One rule can describe a whole attack chain across events, hosts and domains, with time and step windows.
+- **Multi-step sequences.** One rule can describe a whole attack chain across events, hosts and domains, with time and step windows, counting ("5 failures in 5 minutes") and absence ("login *not followed by* MFA").
 - **Baselines.** `rare:` predicates catch "first time this tool ran on this host".
 - **Inline enforcement for agents.** `ChainGuard` sits inside an agent harness and can block a tool call or require human approval before it runs.
 - **Evidence, not just scores.** Every verdict lists the events, fields, matchers, tiers and taint path that produced it.
@@ -34,6 +34,7 @@ Chain is a detection language and engine. It does what YARA, Sigma and Suricata 
 - [Using Chain inside an agent harness](#using-chain-inside-an-agent-harness)
 - [Importing Sigma and YARA](#importing-sigma-and-yara)
 - [Testing and fuzzing rules](#testing-and-fuzzing-rules)
+- [Measuring rules on labeled data](#measuring-rules-on-labeled-data)
 - [CLI reference](#cli-reference)
 - [Project layout](#project-layout)
 - [Feature status](#feature-status)
@@ -97,6 +98,7 @@ chain validate rules                       # compile every rule
 chain test rules                           # run inline rule tests
 chain fuzz rules --min-recall 0.9          # adversarial mutations, recall per technique
 chain eval rules examples/events.jsonl     # run sample events, print verdicts
+chain replay rules examples/labeled_events.jsonl --baseline examples/baseline_events.jsonl
 python examples/agent_harness_demo.py      # ChainGuard blocking an injected exfil
 pytest -q
 ```
@@ -211,6 +213,51 @@ sequence:
 | `tainted_by` | Name of an earlier step this event must descend from |
 | `min_attribution` | 0–1; require the tainted text to actually appear in this event, not just context taint |
 | `same` | Fields that must equal the previous step's event, e.g. `[host, user]` |
+| `count` | `{min: N, within: SECONDS, distinct: FIELD}` — the step completes after N matching events (or N distinct values of `distinct`) in a sliding window |
+| `absent` | `true` makes this a "not followed by" step (see below) |
+| `within` | Seconds a final `absent` step waits before firing |
+
+### Counting and "not followed by"
+
+```yaml
+# 5 failed logins for a user within 5 minutes, then a success
+group_by: user
+sequence:
+  - name: failures
+    event: auth.login
+    where: {fields.outcome: failure}
+    count: {min: 5, within: 300}
+  - name: success
+    event: auth.login
+    where: {fields.outcome: success}
+```
+
+```yaml
+# one host touches 20 distinct ports in a minute
+group_by: host
+sequence:
+  - name: scan
+    event: net.flow
+    count: {min: 20, within: 60, distinct: fields.dest_port}
+```
+
+```yaml
+# a privileged login with no MFA for that user within 2 minutes
+group_by: user
+sequence:
+  - name: login
+    event: auth.login
+    where: {fields.outcome: success, fields.privileged: true}
+  - name: no_mfa
+    event: auth.mfa
+    absent: true
+    within: 120
+```
+
+- **Absent in the middle** (`A`, not `B`, `C`): the partial match is dropped if `B` arrives before `C`.
+- **Absent at the end** (`A`, not `B` within N seconds): only the clock can confirm it. `engine.advance_time(now)` returns these as separate verdicts marked `deferred`, never folded into the verdict of an unrelated event, so a time-out can't block an innocent tool call. `chain eval`, `chain replay`, inline tests and `evaluate_many` advance the clock for you.
+- A count fires once per burst: the counter resets when it reaches `min`.
+- An absent step can't be first, can't follow another absent step, and can't be the target of `tainted_by`. `same` works on it ("no MFA *for the same user*").
 
 ### `where` operators
 
@@ -247,7 +294,7 @@ One schema covers classic telemetry and AI/agent telemetry.
 }
 ```
 
-- **Common types:** `email.attachment`, `file.create`, `file.exec`, `file.scan`, `process.start`, `process.capability`, `net.flow`, `net.dns`, `auth.login`, `log.raw`, `ai.prompt`, `ai.retrieval`, `ai.tool_call`, `ai.tool_result`, `ai.memory_write`, `ai.output`. Any other string works too.
+- **Common types:** `email.attachment`, `file.create`, `file.exec`, `file.scan`, `process.start`, `process.capability`, `net.flow`, `net.dns`, `auth.login`, `auth.mfa`, `log.raw`, `ai.prompt`, `ai.retrieval`, `ai.tool_call`, `ai.tool_result`, `ai.memory_write`, `ai.output`. Any other string works too.
 - **Spans** carry content with a source and a trust level. An event's trust is its least-trusted span.
 - **`inputs` / `outputs`** are provenance edges. Taint flows from an untrusted event through every artifact it produces.
 - **`fields`** holds free-form sensor output and Sigma-style log fields, accessed as `fields.<name>`.
@@ -277,6 +324,7 @@ Or wrap tools directly:
 def send_email(to: str, body: str) -> str: ...
 ```
 
+- `guard.tick(now=None)` advances the clock and returns deferred "not followed by" verdicts (also sent to `on_verdict`). They're never raised.
 - `enforce=False` runs in monitor-only mode: verdicts are returned, never raised.
 - `on_verdict=callback` receives every verdict that has hits, for logging or alerting.
 - `Judge(fn)` takes any function from prompt string to model text. Content is wrapped as data, output must be JSON, and malformed output never counts as a hit.
@@ -302,6 +350,7 @@ tests:
     expect_action: block         # optional
     baseline: [...]              # optional events to seed baselines first
     events: [...]
+    end_ts: 1700000600           # optional: advance the clock after the last event
 ```
 
 `chain test` runs each case against a fresh engine. `chain fuzz` takes every `fire` case, mutates its content and reports recall per evasion technique:
@@ -319,6 +368,33 @@ classic_malicious_command_line
 
 `--min-recall 0.9` makes it a CI gate. Set `fuzz: false` on a case that shouldn't be mutated. An LLM paraphrase mutator can be plugged in through `extra_mutators`.
 
+## Measuring rules on labeled data
+
+`chain replay` runs labeled history through the engine and scores every rule. Add a `labels` list of rule ids to each event a rule *should* fire on:
+
+```json
+{"id": "e012", "type": "net.flow", "host": "ws-17", "inputs": ["proc:4242"], "fields": {"beacon_score": 0.91}, "labels": ["classic_phish_to_ransomware"]}
+```
+
+Label the event the rule fires on: the last step of a sequence, the event that crosses a count threshold, or, for a rule ending in "not followed by", the event the absence is measured from.
+
+```
+$ chain replay rules examples/labeled_events.jsonl --baseline examples/baseline_events.jsonl
+rule                                         TP   FP   FN   prec recall
+ai_indirect_injection_to_exfil                1    0    0   100%   100%
+ai_intent_action_mismatch                     2    0    0   100%   100%
+classic_brute_force_then_success              1    0    0   100%   100%
+...
+(all rules)                                  10    0    0   100%   100%
+```
+
+- `--baseline FILE` seeds `rare:` baselines with known-good history first.
+- `--min-precision` / `--min-recall` fail the run if any rule falls below them. CI uses 0.9 for both.
+- `--out report.json` writes the full report (including FP / FN event ids); CI uploads it on every run so you can track it over time.
+- `-v` lists FP and FN event ids under each rule. Give events stable `id`s so these are meaningful.
+
+The bundled `examples/labeled_events.jsonl` is a small synthetic set that guards against regressions. The real value comes from replaying your own labeled incidents and benign traffic.
+
 ## CLI reference
 
 | Command | What it does |
@@ -327,6 +403,7 @@ classic_malicious_command_line
 | `chain test RULES` | Run inline rule tests |
 | `chain fuzz RULES [--rounds N] [--min-recall R]` | Mutation-fuzz positive tests, exit non-zero below `R` |
 | `chain eval RULES EVENTS.jsonl [--json]` | Run events through the engine and print verdicts |
+| `chain replay RULES LABELED.jsonl [--baseline F] [--min-precision P] [--min-recall R] [--out F] [--json] [-v]` | Score rules against labeled events: TP / FP / FN, precision, recall |
 | `chain import-sigma FILE` | Convert a Sigma rule to Chain YAML |
 | `chain import-yara FILE` | Convert simple YARA rules to Chain YAML |
 
@@ -347,11 +424,12 @@ chain/
   hooks.py         ChainGuard: harness hook points and enforcement
   importers/       Sigma (native evaluation + converter), YARA (basic)
   testing.py       inline tests, mutation fuzzer
+  replay.py        labeled replay, precision / recall per rule
   cli.py           chain CLI
 rules/ai/          injection-to-exfil, intent/action mismatch
-rules/classic/     phish-to-ransomware chain, obfuscated commands, rare admin tools
+rules/classic/     phish-to-ransomware, obfuscated commands, rare admin tools, brute force, port scan, login without MFA
 clusters/          seed semantic clusters (prompt injection, malicious commands)
-examples/          harness demo, sample events, Sigma and YARA rules to import
+examples/          harness demo, sample + labeled events, Sigma and YARA rules to import
 tests/             pytest suite
 assets/            logo
 ```
@@ -365,6 +443,9 @@ assets/            logo
 | `classic_phish_to_ransomware` | alert | Attachment → unsigned exec → encryption / shadow deletion → beaconing |
 | `classic_malicious_command_line` | alert | Download cradles, encoded PowerShell, shadow-copy deletion, obfuscated |
 | `classic_rare_remote_admin_tool` | alert | A remote admin tool running for the first time on a host |
+| `classic_brute_force_then_success` | alert | 5+ failed logins for a user in 5 minutes, then a success (counting) |
+| `classic_port_scan` | alert | 20+ distinct destination ports from one host in a minute (distinct counting) |
+| `classic_privileged_login_without_mfa` | alert | Privileged login with no MFA for that user within 2 minutes (absence) |
 
 ## Feature status
 
@@ -376,16 +457,16 @@ assets/            logo
 | Normalization | NFKC, zero-width, homoglyphs, base64/hex/URL, PowerShell, caret | Full confusables table, concat unrolling, cross-document reassembly |
 | Matchers | Regex, strings, N-of-M, semantic, judge, gray-zone escalation | Classifier is a keyword stub; FAISS; code/binary embeddings |
 | Context | Artifact + context taint, attribution, baselines, `same:`, trust predicates | Asset/identity enrichment; Redis per-tenant baselines |
-| Rule language | Sequences, windows, `group_by`, globs, actions, SOAR hints | "Not followed by" steps, counting aggregations |
+| Rule language | Sequences, windows, `group_by`, globs, actions, SOAR hints, counting, "not followed by" | — |
 | Harness | Five hook points, `pre_tool_call` enforcement, decorator, monitor mode | Async alert-only evaluation, MCP proxy mode |
 | Compatibility | Native Sigma, Sigma and YARA import | Sigma aggregations, YARA hex/modules, Suricata |
-| Testing | Inline tests, baseline seeding, mutation fuzzer, CI gate | Replay against labeled data, precision/recall dashboards |
+| Testing | Inline tests, baseline seeding, mutation fuzzer, labeled replay with precision/recall, CI gates | Dashboards over time |
 
 ## Roadmap
 
 | Phase | Goal | Work |
 |---|---|---|
-| **1. Measure + language** | Prove that changes improve detection | `chain replay` with precision/recall per rule; "not followed by" steps; counting rules |
+| **1. Measure + language** ✅ | Prove that changes improve detection | `chain replay` with precision/recall per rule; "not followed by" steps; counting rules |
 | **2. Production state** | Run as a multi-tenant service | Pluggable state store with a Redis backend; time-decayed baselines; asset/identity enrichment; async alert-only rules |
 | **3. Evasion resistance** | Close the remaining disguise tricks | Full Unicode confusables; string-concat and variable unrolling; cross-document chunk reassembly; matching fuzz mutators |
 | **4. Real models** | Replace stubs, checked against Phase 1 replay | Trained per-label classifiers; vector index; built-in Claude judge; code/binary embeddings |

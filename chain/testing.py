@@ -7,6 +7,7 @@ Every rule can carry inline test cases:
         expect: fire              # fire | no_fire
         expect_action: block      # optional
         events: [ {type: ..., ...}, ... ]
+        end_ts: 1700000600        # optional: advance the clock after the last event
 
 `run_tests` executes each case against a fresh engine.
 `fuzz` takes every `fire` case, mutates its content with evasion techniques
@@ -58,9 +59,18 @@ def _engine_for(rule: CompiledRule, template: Engine | None) -> Engine:
 def _run_case(rule: CompiledRule, case: dict[str, Any], template: Engine | None) -> tuple[bool, str | None]:
     eng = _engine_for(rule, template)
     eng.learn(Event(**e) for e in case.get("baseline", []))
-    fired_action = None
+    verdicts = []
+    ts = None
     for raw in case["events"]:
-        v = eng.evaluate(Event(**raw))
+        ev = Event(**raw)
+        verdicts += eng.advance_time(ev.ts)
+        verdicts.append(eng.evaluate(ev))
+        ts = ev.ts
+    end = case.get("end_ts", ts)   # move the clock on so "not followed by" steps can resolve
+    if end is not None:
+        verdicts += eng.advance_time(end)
+    fired_action = None
+    for v in verdicts:
         for h in v.hits:
             if h.rule_id == rule.id:
                 fired_action = h.action

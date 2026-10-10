@@ -1,0 +1,43 @@
+id: classic_privileged_login_without_mfa
+title: Privileged login not followed by MFA
+description: >
+  A privileged account logs in and no MFA challenge for that user completes
+  within two minutes. Fires once the two minutes are up.
+severity: high
+action: alert
+response: [open_case]
+tags: [initial_access, attack:T1078, absence]
+group_by: user
+sequence:
+  - name: login
+    event: auth.login
+    where: {fields.outcome: success, fields.privileged: true}
+  - name: no_mfa
+    event: auth.mfa
+    absent: true
+    within: 120
+    where: {fields.outcome: success}
+tests:
+  - name: no MFA within two minutes
+    expect: fire
+    events:
+      - {type: auth.login, user: root-ops, ts: 1000, fields: {outcome: success, privileged: true}}
+      - {type: auth.login, user: someone-else, ts: 1050, fields: {outcome: success}}
+    end_ts: 1121
+  - name: MFA completed in time
+    expect: no_fire
+    events:
+      - {type: auth.login, user: root-ops, ts: 1000, fields: {outcome: success, privileged: true}}
+      - {type: auth.mfa, user: root-ops, ts: 1030, fields: {outcome: success}}
+    end_ts: 1200
+  - name: MFA done by a different user doesn't count
+    expect: fire
+    events:
+      - {type: auth.login, user: root-ops, ts: 1000, fields: {outcome: success, privileged: true}}
+      - {type: auth.mfa, user: dana, ts: 1030, fields: {outcome: success}}
+    end_ts: 1200
+  - name: two minutes not up yet
+    expect: no_fire
+    events:
+      - {type: auth.login, user: root-ops, ts: 1000, fields: {outcome: success, privileged: true}}
+    end_ts: 1100

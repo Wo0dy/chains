@@ -1,0 +1,7 @@
+{"type": "process.start", "host": "it-jump-01", "ts": 1759913600, "fields": {"image_name": "psexec.exe"}}
+{"type": "process.start", "host": "it-jump-01", "ts": 1759827200, "fields": {"image_name": "psexec.exe"}}
+{"type": "process.start", "host": "it-jump-01", "ts": 1759740800, "fields": {"image_name": "psexec.exe"}}
+{"type": "process.start", "host": "it-jump-01", "ts": 1759654400, "fields": {"image_name": "psexec.exe"}}
+{"type": "process.start", "host": "it-jump-01", "ts": 1759568000, "fields": {"image_name": "psexec.exe"}}
+{"type": "process.start", "host": "it-jump-01", "ts": 1759481600, "fields": {"image_name": "psexec.exe"}}
+{"type": "process.start", "host": "it-jump-01", "ts": 1759395200, "fields": {"image_name": "psexec.exe"}}

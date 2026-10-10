@@ -1,0 +1,58 @@
+id: classic_port_scan
+title: One host connects to many distinct ports in a minute
+description: Counts distinct destination ports per source host. Repeated traffic to one port doesn't count.
+severity: medium
+action: alert
+tags: [discovery, attack:T1046]
+group_by: host
+sequence:
+  - name: scan
+    event: net.flow
+    count: {min: 20, within: 60, distinct: fields.dest_port}
+tests:
+  - name: twenty distinct ports in 40 seconds
+    expect: fire
+    events:
+      - {type: net.flow, host: ws-3, ts: 100, fields: {dest_ip: 10.0.0.5, dest_port: 21}}
+      - {type: net.flow, host: ws-3, ts: 102, fields: {dest_ip: 10.0.0.5, dest_port: 22}}
+      - {type: net.flow, host: ws-3, ts: 104, fields: {dest_ip: 10.0.0.5, dest_port: 23}}
+      - {type: net.flow, host: ws-3, ts: 106, fields: {dest_ip: 10.0.0.5, dest_port: 25}}
+      - {type: net.flow, host: ws-3, ts: 108, fields: {dest_ip: 10.0.0.5, dest_port: 53}}
+      - {type: net.flow, host: ws-3, ts: 110, fields: {dest_ip: 10.0.0.5, dest_port: 80}}
+      - {type: net.flow, host: ws-3, ts: 112, fields: {dest_ip: 10.0.0.5, dest_port: 110}}
+      - {type: net.flow, host: ws-3, ts: 114, fields: {dest_ip: 10.0.0.5, dest_port: 135}}
+      - {type: net.flow, host: ws-3, ts: 116, fields: {dest_ip: 10.0.0.5, dest_port: 139}}
+      - {type: net.flow, host: ws-3, ts: 118, fields: {dest_ip: 10.0.0.5, dest_port: 143}}
+      - {type: net.flow, host: ws-3, ts: 120, fields: {dest_ip: 10.0.0.5, dest_port: 389}}
+      - {type: net.flow, host: ws-3, ts: 122, fields: {dest_ip: 10.0.0.5, dest_port: 443}}
+      - {type: net.flow, host: ws-3, ts: 124, fields: {dest_ip: 10.0.0.5, dest_port: 445}}
+      - {type: net.flow, host: ws-3, ts: 126, fields: {dest_ip: 10.0.0.5, dest_port: 993}}
+      - {type: net.flow, host: ws-3, ts: 128, fields: {dest_ip: 10.0.0.5, dest_port: 1433}}
+      - {type: net.flow, host: ws-3, ts: 130, fields: {dest_ip: 10.0.0.5, dest_port: 3306}}
+      - {type: net.flow, host: ws-3, ts: 132, fields: {dest_ip: 10.0.0.5, dest_port: 3389}}
+      - {type: net.flow, host: ws-3, ts: 134, fields: {dest_ip: 10.0.0.5, dest_port: 5432}}
+      - {type: net.flow, host: ws-3, ts: 136, fields: {dest_ip: 10.0.0.5, dest_port: 5900}}
+      - {type: net.flow, host: ws-3, ts: 138, fields: {dest_ip: 10.0.0.5, dest_port: 8080}}
+  - name: busy client hitting one port
+    expect: no_fire
+    events:
+      - {type: net.flow, host: ws-4, ts: 100, fields: {dest_port: 443}}
+      - {type: net.flow, host: ws-4, ts: 101, fields: {dest_port: 443}}
+      - {type: net.flow, host: ws-4, ts: 102, fields: {dest_port: 443}}
+      - {type: net.flow, host: ws-4, ts: 103, fields: {dest_port: 443}}
+      - {type: net.flow, host: ws-4, ts: 104, fields: {dest_port: 443}}
+      - {type: net.flow, host: ws-4, ts: 105, fields: {dest_port: 443}}
+      - {type: net.flow, host: ws-4, ts: 106, fields: {dest_port: 443}}
+      - {type: net.flow, host: ws-4, ts: 107, fields: {dest_port: 443}}
+      - {type: net.flow, host: ws-4, ts: 108, fields: {dest_port: 443}}
+      - {type: net.flow, host: ws-4, ts: 109, fields: {dest_port: 443}}
+      - {type: net.flow, host: ws-4, ts: 110, fields: {dest_port: 443}}
+      - {type: net.flow, host: ws-4, ts: 111, fields: {dest_port: 443}}
+      - {type: net.flow, host: ws-4, ts: 112, fields: {dest_port: 443}}
+      - {type: net.flow, host: ws-4, ts: 113, fields: {dest_port: 443}}
+      - {type: net.flow, host: ws-4, ts: 114, fields: {dest_port: 443}}
+      - {type: net.flow, host: ws-4, ts: 115, fields: {dest_port: 443}}
+      - {type: net.flow, host: ws-4, ts: 116, fields: {dest_port: 443}}
+      - {type: net.flow, host: ws-4, ts: 117, fields: {dest_port: 443}}
+      - {type: net.flow, host: ws-4, ts: 118, fields: {dest_port: 443}}
+      - {type: net.flow, host: ws-4, ts: 119, fields: {dest_port: 443}}

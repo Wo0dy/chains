@@ -49,7 +49,7 @@ EVENT_TYPES = {
     # classic
     "email.attachment", "file.create", "file.exec", "file.scan",
     "process.start", "process.capability", "net.flow", "net.dns",
-    "auth.login", "log.raw",
+    "auth.login", "auth.mfa", "log.raw",
     # ai / agent
     "ai.prompt", "ai.retrieval", "ai.tool_call", "ai.tool_result",
     "ai.memory_write", "ai.output",

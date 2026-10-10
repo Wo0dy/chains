@@ -14,6 +14,7 @@ Or wrap tools directly:
 from __future__ import annotations
 
 import functools
+import time
 from typing import Any, Callable
 
 from .engine import Engine
@@ -59,6 +60,18 @@ class ChainGuard:
         if self.on_verdict and verdict.hits:
             self.on_verdict(verdict)
         return verdict
+
+    def tick(self, now: float | None = None) -> list[Verdict]:
+        """Advance the clock: returns verdicts for "not followed by" rules whose time ran out.
+
+        Call it periodically (or before each hook). These verdicts are never raised:
+        the action they describe is already over, so they're for alerting only.
+        """
+        verdicts = self.engine.advance_time(time.time() if now is None else now)
+        if self.on_verdict:
+            for v in verdicts:
+                self.on_verdict(v)
+        return verdicts
 
     def _span(self, text: str, source: str, trust: Trust | str) -> list[Span]:
         return [Span(text=text, source=source, trust=Trust.parse(trust))]

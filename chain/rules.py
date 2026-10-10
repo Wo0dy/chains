@@ -21,6 +21,18 @@ rules; multi-step rules express attack chains across events, hosts and domains.
         event: process.capability
         tainted_by: attach
         where: {fields.capabilities: [encrypt_bulk, delete_shadow_copies]}
+
+Two step modifiers cover what single-event matching can't:
+
+    count: {min: 5, within: 300, distinct: fields.dest_port}
+        the step completes once `min` matching events (or distinct values of
+        `distinct`) are seen within `within` seconds
+
+    absent: true
+        "not followed by". In the middle of a sequence, the partial dies if this
+        event happens before the next step. As the last step it needs
+        `within: <seconds>` and fires once that time passes with no such event
+        (resolved by Engine.advance_time).
 """
 from __future__ import annotations
 
@@ -38,6 +50,22 @@ ACTION_RANK = {"allow": 0, "alert": 1, "redact": 2, "require_approval": 3, "bloc
 SEVERITY_RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 
 
+def _seconds(v: Any) -> Any:
+    """Accept `within: 300` or `within: {seconds: 300}`."""
+    return v.get("seconds") if isinstance(v, dict) else v
+
+
+class Count(BaseModel):
+    min: int = Field(ge=2)
+    within: float = Field(gt=0)                  # seconds, sliding
+    distinct: str | None = None                  # count distinct values of this field instead of events
+
+    @field_validator("within", mode="before")
+    @classmethod
+    def _within(cls, v: Any) -> Any:
+        return _seconds(v)
+
+
 class Step(BaseModel):
     name: str
     event: list[str] = Field(default_factory=lambda: ["*"])
@@ -46,8 +74,16 @@ class Step(BaseModel):
     tainted_by: str | None = None
     min_attribution: float = 0.0       # require copy-through evidence, not just context taint
     same: list[str] = Field(default_factory=list)  # fields that must equal the previous step's event
+    count: Count | None = None
+    absent: bool = False
+    within: float | None = None        # seconds; only on a final absent step
 
     model_config = {"arbitrary_types_allowed": True}
+
+    @field_validator("within", mode="before")
+    @classmethod
+    def _within(cls, v: Any) -> Any:
+        return _seconds(v)
 
     @field_validator("event", mode="before")
     @classmethod
@@ -110,9 +146,26 @@ class CompiledRule:
         names = [s.name for s in rule.sequence]
         if len(set(names)) != len(names):
             raise ValueError(f"{rule.id}: step names must be unique")
-        for s in rule.sequence:
-            if s.tainted_by and s.tainted_by not in names[: names.index(s.name)]:
+        absent = {s.name for s in rule.sequence if s.absent}
+        for i, s in enumerate(rule.sequence):
+            if s.tainted_by and s.tainted_by not in names[:i]:
                 raise ValueError(f"{rule.id}: step {s.name} tainted_by unknown/later step {s.tainted_by!r}")
+            if s.tainted_by in absent:
+                raise ValueError(f"{rule.id}: step {s.name} can't be tainted_by absent step {s.tainted_by!r}")
+            if s.absent:
+                last = i == len(rule.sequence) - 1
+                if i == 0:
+                    raise ValueError(f"{rule.id}: absent step {s.name} can't be the first step")
+                if rule.sequence[i - 1].absent:
+                    raise ValueError(f"{rule.id}: absent step {s.name} can't follow another absent step")
+                if s.count:
+                    raise ValueError(f"{rule.id}: absent step {s.name} can't also count")
+                if last and not s.within:
+                    raise ValueError(f"{rule.id}: final absent step {s.name} needs within: <seconds>")
+                if not last and s.within is not None:
+                    raise ValueError(f"{rule.id}: within only applies to a final absent step ({s.name})")
+            elif s.within is not None:
+                raise ValueError(f"{rule.id}: within on step {s.name} needs absent: true (use count.within to count)")
 
     @property
     def id(self) -> str:

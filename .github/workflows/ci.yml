@@ -15,4 +15,9 @@ jobs:
       - run: chain validate rules
       - run: chain test rules
       - run: chain fuzz rules --min-recall 0.9
+      - run: chain replay rules examples/labeled_events.jsonl --baseline examples/baseline_events.jsonl --min-precision 0.9 --min-recall 0.9 --out replay-report.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: replay-report-py${{ matrix.python }}
+          path: replay-report.json
       - run: pytest -q
