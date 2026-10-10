@@ -27,6 +27,7 @@ Chain is a detection language and engine. It does what YARA, Sigma and Suricata 
 
 ## Contents
 
+- [Architecture](#architecture)
 - [How it works](#how-it-works)
 - [Quick start](#quick-start)
 - [Writing rules](#writing-rules)
@@ -41,6 +42,59 @@ Chain is a detection language and engine. It does what YARA, Sigma and Suricata 
 - [Roadmap](#roadmap)
 - [Production swaps](#production-swaps)
 - [Design notes](#design-notes)
+
+## Architecture
+
+Chain is a rule repository and a live detection runtime in one. Rules and attack clusters are versioned content, CI gates every change, and the engine evaluates each event against state that keeps changing: in-flight sequences, baselines, taint and the semantic index.
+
+```mermaid
+flowchart TB
+    subgraph content["Detection content (versioned in git)"]
+        direction LR
+        rules["rules/<br/>YAML sequences + inline tests"]
+        clusters["clusters/<br/>attack example sets"]
+        importers["importers/<br/>Sigma, YARA → rule YAML"]
+        importers --> rules
+    end
+
+    subgraph gates["Quality gates (CI)"]
+        direction LR
+        validate[validate] --> test[test] --> fuzz["fuzz<br/>recall ≥ 0.9"] --> replay["replay<br/>precision / recall ≥ 0.9<br/>on labeled verdicts"]
+    end
+
+    subgraph sources["Sources → one Event schema"]
+        classic["Classic telemetry<br/>EDR · auth · email · net · logs"]
+        batch["Batch<br/>chain eval · chain replay"]
+        harness["AI agent harness<br/>ChainGuard hooks"]
+    end
+
+    subgraph engine["Runtime engine"]
+        direction LR
+        normalize[Normalize] --> provenance["Provenance<br/>& taint"] --> sequences["Sequences<br/>where · same · rare<br/>count · absent"] --> verdict["Verdict<br/>strongest action wins"]
+        sequences <-.->|"match / score"| cascade
+        subgraph cascade["Content cascade, cheapest first"]
+            direction LR
+            regex["regex · strings"] -.-> semantic -.-> classifier -.-> judge["LLM judge<br/>gray band only"]
+        end
+        subgraph state["Live state (read during match, written after)"]
+            direction LR
+            seqstate[sequence state] ~~~ baselines ~~~ taint[taint graph] ~~~ index[semantic index]
+        end
+    end
+
+    subgraph outcomes["Outcomes"]
+        stream["Verdict stream<br/>action · SOAR hints · evidence"]
+        deferred["Deferred verdicts<br/>tick() / advance_time()"]
+        enforce["Inline enforcement<br/>ToolBlocked · ApprovalRequired<br/>raised to the agent before the tool runs"]
+    end
+
+    content -->|PR| gates
+    gates -->|compiled rule pack| engine
+    sources -->|events| engine
+    engine -->|verdicts| outcomes
+```
+
+Dotted arrows mark the escalating content cascade: a costlier tier runs only when a cheaper one is uncertain. The loop closes outside the runtime: triaged verdicts become labeled events, `chain replay` scores every rule against them, and the false positives and misses it reports drive the next rule fix or cluster update. Live state is in-memory today; Redis per tenant and FAISS are the planned swaps.
 
 ## How it works
 
