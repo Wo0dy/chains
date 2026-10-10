@@ -464,15 +464,18 @@ assets/            logo
 
 ## Roadmap
 
-| Phase | Goal | Work |
-|---|---|---|
-| **1. Measure + language** ✅ | Prove that changes improve detection | `chain replay` with precision/recall per rule; "not followed by" steps; counting rules |
-| **2. Production state** | Run as a multi-tenant service | Pluggable state store with a Redis backend; time-decayed baselines; asset/identity enrichment; async alert-only rules |
-| **3. Evasion resistance** | Close the remaining disguise tricks | Full Unicode confusables; string-concat and variable unrolling; cross-document chunk reassembly; matching fuzz mutators |
-| **4. Real models** | Replace stubs, checked against Phase 1 replay | Trained per-label classifiers; vector index; built-in Claude judge; code/binary embeddings |
-| **5. Integrations** | Plug into existing tools and agents | MCP proxy mode; OCSF export; Sigma aggregations; YARA hex/modules; Suricata import |
+Chain is becoming one place for the rules, signatures and IOCs that live today in YARA, Sigma, Suricata and other sources: converted into one language, labelled with how faithfully they converted, usable directly by LLMs and agents, and kept current by a gated self-improving loop. The full plan is in [ROADMAP.md](ROADMAP.md).
 
-Phases 1, 3 and 5 can run in parallel; Phase 4 depends on Phase 1. MCP proxy mode can move earlier for AI-agent security pilots.
+| Phase | Goal |
+|---|---|
+| **Engine core + 1** ✅ | Rule language, taint, tiered matching, counting, "not followed by", replay with precision/recall |
+| **A. Source registry** | Pin upstream rule repos as sources, sync them into a corpus with origin, license and fidelity per rule |
+| **B. Format coverage** | Full Sigma (correlation, counting), YARA (hex, conditions), Suricata parsing; differential tests against the original engines |
+| **C. IOC layer** | IOC store with expiry, STIX/TAXII and MISP feeds, `ioc:` predicate |
+| **D. Unification + quality** | Merge equivalent rules, quality scores, ATT&CK / ATLAS coverage map, rule lifecycle |
+| **E. LLM + agent ready** | Rule cards, JSON Schema, semantic search, MCP server and proxy |
+| **F. Self-evolving** | Health monitoring, gated LLM repair and generation, every change a reversible commit |
+| **G. Production scale** | Redis state per customer, decayed baselines, enrichment, hot reload, background alert rules |
 
 ## Production swaps
 
