@@ -77,6 +77,9 @@ Status: **Built** = working in this scaffold with tests · **Stub** = interface 
 | `@guard.tool` decorator to wrap any tool | Built |
 | Monitor-only mode (`enforce=False`) and verdict callback | Built |
 | `guard.tick()` / `engine.advance_time()` for clock-confirmed absence verdicts | Built |
+| Tool-to-event bridge: tool calls also evaluated as `process.start` / `net.flow` / `file.create` …, taint carried by a provenance edge | Built |
+| `ai.detection` event after a corpus hit; bundled block / require_approval rules on it | Built |
+| Platform stamping (`fields.platform`) and `when_set` predicate so platform-specific corpus rules scope themselves | Built |
 | Async evaluation for alert-only rules | Planned |
 | MCP proxy mode (Chain in front of any MCP server) | Planned |
 

@@ -123,6 +123,7 @@ def synced(tmp_path):
 def test_sigma_import_reports_notes_and_meta():
     imp = sigma_import(SIGMA_CLEAN)
     assert imp.notes == [] and imp.rule["sequence"][0]["event"] == "process.start"
+    assert imp.rule["sequence"][0]["where"]["fields.platform"] == {"when_set": "windows"}
     assert imp.meta["status"] == "test" and imp.meta["falsepositives"] == ["Admin scripts"]
     lossy = sigma_import(SIGMA_LOSSY)
     assert any("|base64offset" in n for n in lossy.notes)

@@ -10,6 +10,13 @@ Or wrap tools directly:
 
     @guard.tool(external_dest=lambda args: args["to"])
     def send_email(to, body): ...
+
+Tool calls are also expressed as the classic event they are about to cause
+(`run_shell` -> process.start, `http_post` -> net.flow + net.http + net.dns,
+`write_file` -> file.create), linked to the tool call by a provenance edge so
+the session's taint carries over. Every rule in the corpus then applies to
+agent actions. When any of them fires, an `ai.detection` event follows, so a
+rule can say "corpus hit while tainted by untrusted content -> block".
 """
 from __future__ import annotations
 
@@ -17,7 +24,9 @@ import functools
 import time
 from typing import Any, Callable
 
+from .bridge import ToolBridge
 from .engine import Engine
+from .rules import SEVERITY_RANK
 from .schema import Event, Span, ToolCall, Trust
 from .verdict import Verdict
 
@@ -43,23 +52,32 @@ class ChainGuard:
         user: str | None = None,
         on_verdict: Callable[[Verdict], None] | None = None,
         enforce: bool = True,
+        host: str | None = None,
+        platform: str | None = None,        # windows | linux | macos where the agent's tools run; default: this host
+        bridge: ToolBridge | None = None,   # None = default mappings; ToolBridge(defaults=False) = off
     ) -> None:
         self.engine = engine
         self.session_id = session_id
         self.agent_id = agent_id
         self.user = user
+        self.host = host
         self.on_verdict = on_verdict
         self.enforce = enforce
+        self.bridge = bridge if bridge is not None else ToolBridge(platform=platform)
         self._step = 0
 
     def _emit(self, type_: str, **kw: Any) -> Verdict:
+        verdict, _ = self._emit_event(type_, **kw)
+        return verdict
+
+    def _emit_event(self, type_: str, **kw: Any) -> tuple[Verdict, Event]:
         self._step += 1
         ev = Event(type=type_, session_id=self.session_id, agent_id=self.agent_id,
-                   user=self.user, step=self._step, **kw)
+                   user=self.user, host=self.host, step=self._step, **kw)
         verdict = self.engine.evaluate(ev)
         if self.on_verdict and verdict.hits:
             self.on_verdict(verdict)
-        return verdict
+        return verdict, ev
 
     def tick(self, now: float | None = None) -> list[Verdict]:
         """Advance the clock: returns verdicts for "not followed by" rules whose time ran out.
@@ -94,8 +112,33 @@ class ChainGuard:
 
     def pre_tool_call(self, name: str, args: dict[str, Any], dest: str | None = None,
                       external: bool = False) -> Verdict:
-        verdict = self._emit("ai.tool_call", tool=ToolCall(name=name, args=args, dest=dest, dest_external=external),
-                             fields={"trust": "system"})
+        """Check a tool call before it runs. The verdict merges the hits on the ai.tool_call
+        event, on the classic events the bridge derives from it, and on the ai.detection
+        event that follows a corpus hit. Raises ToolBlocked / ApprovalRequired when enforcing."""
+        bridged = self.bridge.events(name, args)
+        call_artifact = f"toolcall:{self.session_id}:{self._step + 1}"
+        verdict, call_ev = self._emit_event(
+            "ai.tool_call", tool=ToolCall(name=name, args=args, dest=dest, dest_external=external),
+            fields={"trust": "system"}, outputs=[call_artifact] if bridged else [])
+
+        classic_hits = []
+        for spec in bridged:
+            spec = dict(spec)
+            spec.setdefault("fields", {})
+            spec["fields"].setdefault("trust", "system")
+            spec["inputs"] = list(spec.get("inputs", [])) + [call_artifact]
+            v, _ = self._emit_event(spec.pop("type"), **spec)
+            classic_hits += v.hits
+        verdict.hits += classic_hits
+
+        if classic_hits:
+            worst = max((h.severity for h in classic_hits), key=SEVERITY_RANK.__getitem__)
+            det, _ = self._emit_event("ai.detection", inputs=[call_artifact], fields={
+                "trust": "system", "tool": name, "rules": sorted({h.rule_id for h in classic_hits}),
+                "titles": [h.title for h in classic_hits][:10], "max_severity": worst,
+                "sources": sorted({h.rule_id.split("_", 1)[0] for h in classic_hits})})
+            verdict.hits += det.hits
+
         if self.enforce:
             if verdict.blocked:
                 raise ToolBlocked(verdict)

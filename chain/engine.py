@@ -79,12 +79,15 @@ class Engine:
     @classmethod
     def from_paths(
         cls,
-        rules_path: str | Path,
+        rules_path: str | Path | Iterable[str | Path],
         clusters_path: str | Path | None = None,
         judge: Judge | None = None,
     ) -> "Engine":
+        """Build an engine from one or more rule directories, e.g. ("rules", "corpus/sigmahq")."""
+        paths = [rules_path] if isinstance(rules_path, (str, Path)) else list(rules_path)
+        rules = [r for p in paths for r in load_rules(p)]
         index = SemanticIndex().load_dir(clusters_path) if clusters_path and Path(clusters_path).exists() else None
-        return cls(load_rules(rules_path), semantic_index=index, classifier=KeywordClassifier(), judge=judge)
+        return cls(rules, semantic_index=index, classifier=KeywordClassifier(), judge=judge)
 
     def learn(self, events: Iterable[Event]) -> None:
         """Seed baselines from known-good history (no detection, no taint)."""

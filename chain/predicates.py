@@ -37,6 +37,8 @@ def check_value(path: str, actual: Any, cond: Any) -> bool:
 def _op(path: str, actual: Any, op: str, arg: Any) -> bool:
     if op == "exists":
         return (actual is not None) == bool(arg)
+    if op == "when_set":
+        return actual is None or check_value(path, actual, arg)
     if actual is None:
         return False
     if op == "eq":

@@ -77,6 +77,7 @@ KNOWN_UNSUPPORTED = {
     "expand", "fieldref", "i", "m", "s", "minute", "hour", "day", "week", "month", "year",
 }
 
+PLATFORMS = {"windows", "linux", "macos"}
 _WINDASH = ("-", "/", "–", "—", "―")
 _WILD = set("*?\\")
 
@@ -322,6 +323,10 @@ def sigma_import(sigma: dict[str, Any] | str) -> SigmaImport:
     step: dict[str, Any] = {"name": "match", "where": {"sigma": {"detection": detection}}}
     if event_type:
         step["event"] = event_type
+    product = str(logsource.get("product") or "").lower()
+    if product in PLATFORMS:
+        # Only applies when the event says where it happened; log pipelines without a platform field are unaffected.
+        step["where"]["fields.platform"] = {"when_set": product}
     rule = {
         "id": "sigma_" + re.sub(r"[^a-z0-9]+", "_", str(sigma.get("id") or sigma.get("title", "rule")).lower()).strip("_"),
         "title": sigma.get("title", ""),

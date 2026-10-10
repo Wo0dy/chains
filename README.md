@@ -271,6 +271,7 @@ where:
   fields.image: {regex: '\\psexec'}   # regex, contains, contains_all
   fields.user: {not_in: [svc_backup]} # eq, ne, in, not_in, exists
   rare: {field: fields.image_name, by: host, max_seen: 0}   # first time on this host
+  fields.platform: {when_set: windows}  # passes when the field is absent (events that don't say)
   sigma: {detection: {...}}           # embed a native Sigma detection block
 ```
 
@@ -324,6 +325,31 @@ Or wrap tools directly:
 @guard.tool(external_dest=lambda a: a["to"], is_external=lambda d: not d.endswith("@corp.com"))
 def send_email(to: str, body: str) -> str: ...
 ```
+
+### Tool calls reach the whole corpus
+
+An agent running `powershell -enc …` through a `run_shell` tool is, to a SOC, a process creation. The guard therefore expresses every tool call as the classic event it is about to cause, linked to the `ai.tool_call` by a provenance edge so the session's taint carries across:
+
+| Agent tool (name pattern) | Also evaluated as |
+|---|---|
+| `*shell*`, `*bash*`, `*exec*`, `*cmd*`, `*terminal*` … | `process.start` with `CommandLine`, `Image`, `ParentImage` |
+| `*http*`, `*fetch*`, `*curl*`, `*request*`, `*download*` … | `net.flow` + `net.http` + `net.dns` |
+| `*write_file*`, `*save_file*`, `*create_file*` … | `file.create` |
+| `*delete_file*`, `*rm*` … | `file.delete` |
+| `*dns*`, `*resolve*` … | `net.dns` |
+
+Every rule in the corpus then applies to agent actions. If any fires, an `ai.detection` event follows (tool, rule ids, max severity), and two bundled rules act on it:
+
+- `ai_tainted_action_hits_corpus` → **block**: a corpus rule fired on a tool call while the session is tainted by untrusted content (a web page, an email, a tool result). Whatever the content said, the agent is about to do something a SOC would alert on, under its influence.
+- `ai_action_hits_corpus` → **require approval**: a high/critical corpus rule fired with no untrusted content involved. The user may well have asked for it; a human confirms.
+
+```python
+guard = ChainGuard(engine, session_id=sid, platform="windows")      # where the agent's tools run
+guard.on_retrieval(page_text, source="web:vendor")                   # contains "run powershell -enc …"
+guard.pre_tool_call("run_shell", {"cmd": "powershell -enc SQBF…"})   # raises ToolBlocked: 4 Sigma rules + taint
+```
+
+With `Engine.from_paths(["rules", "corpus/sigmahq"])` the same call costs ~100 ms on a Windows agent (1,655 `process_creation` rules) and a benign `ls -la` passes in ~90 ms. `platform` (windows / linux / macos, default: this host) is stamped on bridged events so platform-specific corpus rules only see their own; `Image` is synthesised as a conventional install path when the tool gives only a name, and marked `image_synthesised`. Add your own mappings with `ToolBridge().register("deploy_*", builder)`, or turn the bridge off with `bridge=ToolBridge(defaults=False)`.
 
 - `guard.tick(now=None)` advances the clock and returns deferred "not followed by" verdicts (also sent to `on_verdict`). They're never raised.
 - `enforce=False` runs in monitor-only mode: verdicts are returned, never raised.
@@ -471,6 +497,7 @@ chain/
   engine.py        sequence state machine, event -> Verdict
   verdict.py       actions, evidence trail, explain()
   hooks.py         ChainGuard: harness hook points and enforcement
+  bridge.py        tool-to-event bridge: tool calls as the classic events they cause
   importers/       Sigma (native evaluation + converter), YARA (text/regex; the rest delegated)
   corpus/          source manifests, fetch, sync pipeline, safety checks, report
   testing.py       inline tests, mutation fuzzer
@@ -492,6 +519,8 @@ assets/            logo
 |---|---|---|
 | `ai_indirect_injection_to_exfil` | block | Injected instructions in untrusted content, followed by an external send |
 | `ai_intent_action_mismatch` | require_approval | A read-only request (summarize, explain …) followed by an external write |
+| `ai_tainted_action_hits_corpus` | block | A corpus rule fired on a bridged tool call while the session is tainted by untrusted content |
+| `ai_action_hits_corpus` | require_approval | A high/critical corpus rule fired on a bridged tool call |
 | `classic_phish_to_ransomware` | alert | Attachment → unsigned exec → encryption / shadow deletion → beaconing |
 | `classic_malicious_command_line` | alert | Download cradles, encoded PowerShell, shadow-copy deletion, obfuscated |
 | `classic_rare_remote_admin_tool` | alert | A remote admin tool running for the first time on a host |
@@ -510,7 +539,7 @@ assets/            logo
 | Matchers | Regex, strings, N-of-M, semantic, judge, gray-zone escalation | Classifier is a keyword stub; FAISS; code/binary embeddings |
 | Context | Artifact + context taint, attribution, baselines, `same:`, trust predicates | Asset/identity enrichment; Redis per-tenant baselines |
 | Rule language | Sequences, windows, `group_by`, globs, actions, SOAR hints, counting, "not followed by" | — |
-| Harness | Five hook points, `pre_tool_call` enforcement, decorator, monitor mode | Async alert-only evaluation, MCP proxy mode |
+| Harness | Five hook points, `pre_tool_call` enforcement, decorator, monitor mode, tool-to-event bridge so the whole corpus applies to agent actions | Async alert-only evaluation, MCP proxy mode |
 | Compatibility | Native Sigma, Sigma and YARA import | Sigma aggregations, YARA hex/modules, Suricata |
 | Testing | Inline tests, baseline seeding, mutation fuzzer, labeled replay with precision/recall, CI gates | Dashboards over time |
 

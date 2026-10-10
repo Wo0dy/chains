@@ -1,0 +1,24 @@
+id: ai_action_hits_corpus
+title: Agent action matches a high-severity detection rule
+description: >
+  A tool call, expressed as the classic event it causes, fired a high or critical rule
+  from the corpus. No untrusted content is involved, so the user may well have asked for
+  it, but it is the kind of action a SOC would page on. Ask a human first.
+severity: high
+action: require_approval
+tags: [ai, corpus]
+sequence:
+  - name: detection
+    event: ai.detection
+    where:
+      fields.max_severity: [high, critical]
+tests:
+  - name: high severity corpus hit
+    expect: fire
+    expect_action: require_approval
+    events:
+      - {type: ai.detection, session_id: s1, fields: {trust: system, tool: run_shell, rules: [sigma_abc], max_severity: critical}}
+  - name: medium severity is only logged
+    expect: no_fire
+    events:
+      - {type: ai.detection, session_id: s2, fields: {trust: system, tool: run_shell, rules: [sigma_abc], max_severity: medium}}
