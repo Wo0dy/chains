@@ -122,6 +122,14 @@ flowchart TD
     V --> A["allow · alert · redact ·<br/>require_approval · block"]
 ```
 
+For each event, the engine:
+
+1. Records provenance: artifact edges (`inputs` / `outputs`) and, for agent sessions, context taint.
+2. Advances every rule's in-flight sequences for the event's group (session, host, user …).
+3. Runs step checks cheapest-first: event type → `where` fields → `same` binding → taint → content matchers.
+4. Turns completed sequences into hits. The strongest action across all hits becomes the verdict.
+5. Updates baselines *after* evaluation, so an event never masks itself.
+
 ### Example: blocking an indirect prompt injection
 
 The `ai_indirect_injection_to_exfil` rule, run inside an agent through `ChainGuard`:
@@ -150,14 +158,6 @@ sequenceDiagram
     G--xA: raise ToolBlocked
     Note over T: never runs
 ```
-
-For each event, the engine:
-
-1. Records provenance: artifact edges (`inputs` / `outputs`) and, for agent sessions, context taint.
-2. Advances every rule's in-flight sequences for the event's group (session, host, user …).
-3. Runs step checks cheapest-first: event type → `where` fields → `same` binding → taint → content matchers.
-4. Turns completed sequences into hits. The strongest action across all hits becomes the verdict.
-5. Updates baselines *after* evaluation, so an event never masks itself.
 
 ### The content cascade
 
