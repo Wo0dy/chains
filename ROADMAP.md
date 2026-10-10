@@ -30,7 +30,7 @@ It is three things:
 
 Unified event schema, normalization, tiered matchers, provenance and taint, sequences, `ChainGuard`, Sigma/YARA importers, inline tests, fuzzing, counting, "not followed by", `chain replay` with precision and recall per rule.
 
-### Phase A — Source registry and ingestion
+### Phase A — Source registry and ingestion ✅
 
 - `sources/*.yaml` manifests; `chain sources add <git-url>`, `chain sources sync`, `chain sources status`.
 - Pipeline: fetch the pinned commit → detect format → import → validate → safety checks → test → write to corpus → report what changed.
@@ -39,6 +39,8 @@ Unified event schema, normalization, tiered matchers, provenance and taint, sequ
 - Starts with SigmaHQ, since the importer already exists.
 
 **Done when:** `chain sources sync sigmahq` builds a corpus from a pinned SigmaHQ commit with a per-rule fidelity label and a report, and the corpus loads in the engine.
+
+**Result:** 3,768 SigmaHQ rules, 3,750 exact, 18 lossy, 0 failed, 7 safety-flagged, in 17 s. Remaining lossy modifiers (`base64offset`, `fieldref`, `expand`, `wide`, regex flags) go to Phase B.
 
 ### Phase B — Full coverage of the three formats
 

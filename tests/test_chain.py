@@ -71,6 +71,30 @@ def test_sequence_window_expires():
     assert eng.evaluate(Event(type="x.b")).action == "allow"
 
 
+def test_step_window_counts_each_event_once_whatever_the_rule_count():
+    # Two rules share a group: an event must advance the group's step counter once, not twice.
+    mk = lambda i: load_rule({"id": f"w{i}", "window": {"steps": 2},
+                              "sequence": [{"name": "a", "event": "x.a"}, {"name": "b", "event": "x.b"}]})
+    eng = Engine([mk(1), mk(2)])
+    eng.evaluate(Event(type="x.a"))
+    eng.evaluate(Event(type="x.noise"))
+    assert len(eng.evaluate(Event(type="x.b")).hits) == 2
+
+
+def test_type_index_keeps_glob_and_multistep_rules_visible():
+    rules = [
+        load_rule({"id": "glob", "sequence": [{"name": "a", "event": "ai.*"}]}),
+        load_rule({"id": "exact", "sequence": [{"name": "a", "event": "x.a"}, {"name": "b", "event": "y.b"}]}),
+        load_rule({"id": "other", "sequence": [{"name": "a", "event": "z.z"}]}),
+    ]
+    eng = Engine(rules)
+    assert [r.id for r in eng._candidates("ai.prompt")] == ["glob"]
+    assert [r.id for r in eng._candidates("y.b")] == ["glob", "exact"]
+    assert [r.id for r in eng._candidates("nothing")] == ["glob"]
+    eng.evaluate(Event(type="x.a"))
+    assert [h.rule_id for h in eng.evaluate(Event(type="y.b")).hits] == ["exact"]
+
+
 def test_chain_fires_once_not_on_every_later_event():
     rule = load_rule({"id": "o", "sequence": [{"name": "a", "event": "x.a"}, {"name": "b", "event": "x.b"}]})
     eng = Engine([rule])

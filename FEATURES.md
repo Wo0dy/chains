@@ -83,11 +83,29 @@ Status: **Built** = working in this scaffold with tests · **Stub** = interface 
 ## 8. Compatibility
 | Feature | Status |
 |---|---|
-| Native Sigma evaluation: selections, keywords, modifiers, `and/or/not`, `1 of x*`, `all of them` | Built |
+| Native Sigma evaluation: selections, keywords, modifiers (`contains`, `startswith`, `endswith`, `re`, `all`, `base64`, `windash`, `exists`, `cased`), `and/or/not`, `1 of x*`, `all of them` | Built |
+| Sigma logsource → event type mapping (40 categories; unmapped ones scope to `<product>.<category>`) | Built |
+| Importers report fidelity notes per rule (every dropped or approximated feature) | Built |
+| YARA rules Chain can't run are **delegated** (kept with native source, matched on `fields.yara_matches`) | Built |
 | `chain import-sigma` converter | Built |
 | `chain import-yara` for text/regex strings with `any/all/N of them` | Built |
-| Sigma aggregations, YARA hex strings and modules | Planned (use native engine as a sensor meanwhile) |
+| Sigma modifiers `cidr`, `utf16*`, `base64offset`, `gt/lt`, `fieldref`, `expand`; Sigma aggregations and correlation rules | Planned (Phase B) |
+| YARA hex strings, full conditions and modules in Chain's own matchers | Planned (Phase B; delegated meanwhile) |
 | Suricata rule import | Planned |
+
+## 8b. Sources and corpus (roadmap Phase A)
+| Feature | Status |
+|---|---|
+| Source manifests (`sources/*.yaml`): git URL or local dir, pinned commit, format, paths, excludes, license, attribution | Built |
+| `chain sources add / list / sync / status`; `--update` moves the pin, `--check-upstream` shows new commits | Built |
+| Fetch by pinned commit into a local cache (shallow); local git repos pin too | Built |
+| Pipeline: import → schema validation → safety checks → corpus write with `origin:` block | Built |
+| Fidelity label per rule: `exact` / `lossy` (with notes) / `delegated` | Built |
+| Safety checks: catastrophic regex (static + timed probes), matches-everything, unconstrained steps; `--strict` refuses them | Built |
+| Sync report: counts, fidelity notes ranked by frequency (the Phase B priority list), failures, flags, added/updated/removed vs last sync | Built |
+| `index.json` + `report.json` per source; corpus loads straight into `Engine.from_paths` | Built |
+| Suricata source format | Planned (Phase B) |
+| Corpus-wide dedup, quality scores, lifecycle states | Planned (Phase D) |
 
 ## 9. Testing and quality
 | Feature | Status |
@@ -101,4 +119,4 @@ Status: **Built** = working in this scaffold with tests · **Stub** = interface 
 | Precision/recall dashboards over time | Planned (CI stores `replay-report.json` per run) |
 
 ## 10. CLI
-`chain validate`, `chain test`, `chain fuzz`, `chain eval`, `chain replay`, `chain import-sigma`, `chain import-yara` — all Built.
+`chain validate`, `chain test`, `chain fuzz`, `chain eval`, `chain replay`, `chain import-sigma`, `chain import-yara`, `chain sources add|list|sync|status` — all Built.

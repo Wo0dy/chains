@@ -99,6 +99,32 @@ class Window(BaseModel):
     steps: int | None = None
 
 
+class Origin(BaseModel):
+    """Where a corpus rule came from and how faithfully it converted."""
+
+    source: str                          # manifest name, e.g. sigmahq
+    format: str                          # sigma | yara | suricata | chain
+    path: str                            # path inside the upstream repo
+    ref: str = ""                        # pinned upstream commit
+    upstream_id: str = ""
+    upstream_sha256: str = ""            # hash of the upstream file, to detect changes
+    license: str = ""
+    fidelity: str = "exact"              # exact | lossy | delegated
+    notes: list[str] = Field(default_factory=list)   # what was lost or approximated
+    status: str | None = None            # upstream lifecycle: stable, test, experimental, deprecated ...
+    logsource: dict[str, Any] = Field(default_factory=dict)
+    falsepositives: list[str] = Field(default_factory=list)
+    references: list[str] = Field(default_factory=list)
+    native: str | None = None            # original rule text for delegated rules
+
+    @field_validator("fidelity")
+    @classmethod
+    def _fidelity(cls, v: str) -> str:
+        if v not in ("exact", "lossy", "delegated"):
+            raise ValueError("fidelity must be exact, lossy or delegated")
+        return v
+
+
 class Rule(BaseModel):
     id: str
     title: str = ""
@@ -112,6 +138,7 @@ class Rule(BaseModel):
     window: Window = Field(default_factory=Window)
     sequence: list[Step]
     tests: list[dict[str, Any]] = Field(default_factory=list)
+    origin: Origin | None = None
     source_file: str | None = None
 
     @field_validator("action")

@@ -59,6 +59,19 @@ class Engine:
         self._group_count: dict[tuple[str, Any], int] = defaultdict(int)
         self._rare_keys = sorted({k for r in self.rules for s in r.steps for k in s.rare_keys})
         self._by_id = {r.id: r for r in self.rules}
+        # Event-type index: a rule only needs to see events whose type one of its steps accepts.
+        # Rules with glob patterns are checked for every event; exact types are looked up.
+        self._order = {id(r): i for i, r in enumerate(self.rules)}
+        self._exact: dict[str, list[CompiledRule]] = defaultdict(list)
+        self._globbed: list[CompiledRule] = []
+        for r in self.rules:
+            pats = {p for st in r.steps for p in st.spec.event}
+            if any(any(ch in p for ch in "*?[") for p in pats):
+                self._globbed.append(r)
+            else:
+                for p in pats:
+                    self._exact[p].append(r)
+        self._group_fields = sorted({r.rule.group_by for r in self.rules})
         self._timed = {r.id for r in self.rules if r.steps[-1].spec.absent}
         self._ready: list[Verdict] = []   # absence verdicts resolved but not yet handed out
 
@@ -87,15 +100,26 @@ class Engine:
         verdict = Verdict(event_id=event.id)
         text_cache: dict[bool, str] = {}
 
-        for rule in self.rules:
+        # One event counts once per group, however many rules share that group.
+        for gb in self._group_fields:
+            self._group_count[(gb, event.get(gb))] += 1
+
+        for rule in self._candidates(event.type):
             group = (rule.rule.group_by, event.get(rule.rule.group_by))
-            self._group_count[group] += 1
             hit = self._advance(rule, event, taint, group, text_cache)
             if hit:
                 verdict.hits.append(hit)
 
         self.baseline.observe(event, self._rare_keys)
         return verdict
+
+    def _candidates(self, event_type: str) -> list[CompiledRule]:
+        exact = self._exact.get(event_type)
+        if not exact:
+            return self._globbed
+        if not self._globbed:
+            return exact
+        return sorted(exact + self._globbed, key=lambda r: self._order[id(r)])
 
     def evaluate_many(self, events: Iterable[Event]) -> list[Verdict]:
         out: list[Verdict] = []

@@ -7,6 +7,10 @@
   chain replay RULES LABELED.jsonl  score rules against labeled history (precision / recall)
   chain import-sigma FILE         convert a Sigma rule to Chain YAML
   chain import-yara FILE          convert simple YARA rules to Chain YAML
+  chain sources add URL           register an upstream rule repo, pinned to its current head
+  chain sources list              show registered sources
+  chain sources sync [NAME ...]   pull pinned commits, convert, check and write the corpus
+  chain sources status            corpus counts per source; --check-upstream shows new commits
 """
 from __future__ import annotations
 
@@ -17,6 +21,9 @@ from pathlib import Path
 
 import yaml
 
+from .corpus.pipeline import corpus_status, sync_source
+from .corpus.sources import (DEFAULT_CACHE_DIR, DEFAULT_CORPUS_DIR, DEFAULT_SOURCES_DIR, add_source, list_sources,
+                             load_source, resolve_head)
 from .engine import Engine
 from .importers.sigma import sigma_to_chain
 from .importers.yara import yara_to_chain
@@ -113,6 +120,74 @@ def cmd_import_yara(args) -> int:
     return 0
 
 
+# ------------------------------------------------------------------ sources
+def cmd_sources_add(args) -> int:
+    fields = {k: v for k, v in dict(format=args.format, paths=args.paths, exclude=args.exclude, license=args.license,
+                                     attribution=args.attribution, branch=args.branch, ref=args.ref,
+                                     description=args.description).items() if v}
+    src = add_source(args.url, args.name, Path(args.sources), **fields)
+    print(f"added {src.name}: {src.url} @ {src.ref[:12] or 'local'} -> {src.manifest_path(Path(args.sources))}")
+    return 0
+
+
+def cmd_sources_list(args) -> int:
+    sources = list_sources(Path(args.sources))
+    if not sources:
+        print(f"no sources in {args.sources}")
+        return 0
+    for s in sources:
+        print(f"{s.name:20s} {s.format:6s} {s.ref[:12] or 'local':12s} {s.url}  paths={','.join(s.paths)}"
+              f"  license={s.license or '-'}  last_sync={s.last_sync or 'never'}")
+    return 0
+
+
+def cmd_sources_sync(args) -> int:
+    names = args.names or [s.name for s in list_sources(Path(args.sources))]
+    if not names:
+        print(f"no sources in {args.sources}; add one with `chain sources add URL`")
+        return 1
+    rc = 0
+    reports = []
+    for name in names:
+        src = load_source(name, Path(args.sources))
+        rep = sync_source(src, Path(args.corpus), Path(args.cache), strict=args.strict, update=args.update,
+                          sources_dir=Path(args.sources))
+        reports.append(rep)
+        if not args.json:
+            print(rep.table(verbose=args.verbose))
+            print()
+        if not rep.ok:
+            rc = 1
+    if args.json:
+        print(json.dumps([r.to_dict() for r in reports], indent=1))
+    return rc
+
+
+def cmd_sources_status(args) -> int:
+    sources = list_sources(Path(args.sources))
+    if not sources:
+        print(f"no sources in {args.sources}")
+        return 0
+    print(f"{'source':20s} {'pinned':12s} {'rules':>6s} {'exact':>6s} {'lossy':>6s} {'deleg':>6s} {'flags':>6s}  synced")
+    for s in sources:
+        st = corpus_status(Path(args.corpus), s.name)
+        if st is None:
+            line = f"{s.name:20s} {s.ref[:12] or 'local':12s} {'-':>6s} {'-':>6s} {'-':>6s} {'-':>6s} {'-':>6s}  never"
+        else:
+            line = (f"{s.name:20s} {s.ref[:12] or 'local':12s} {st['rules']:6d} {st['exact']:6d} {st['lossy']:6d} "
+                    f"{st['delegated']:6d} {st['flagged']:6d}  {st['synced']}")
+            if st["ref"] != s.ref:
+                line += "  (corpus is from a different commit; re-sync)"
+        if args.check_upstream and not s.is_local:
+            try:
+                head = resolve_head(s.url, s.branch)
+                line += "  upstream: up to date" if head == s.ref else f"  upstream: new commit {head[:12]} (sync --update)"
+            except RuntimeError as e:
+                line += f"  upstream: {e}"
+        print(line)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="chain")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -142,6 +217,29 @@ def main(argv: list[str] | None = None) -> int:
         ("-v", {"dest": "verbose", "action": "store_true", "help": "list FP / FN event ids"}))
     add("import-sigma", cmd_import_sigma)
     add("import-yara", cmd_import_yara)
+
+    src = sub.add_parser("sources", help="manage upstream rule sources and the corpus")
+    ssub = src.add_subparsers(dest="scmd", required=True)
+
+    def add_src(name, fn, *extra):
+        sp = ssub.add_parser(name)
+        sp.set_defaults(fn=fn)
+        sp.add_argument("--sources", default=str(DEFAULT_SOURCES_DIR), help="manifest directory")
+        sp.add_argument("--corpus", default=str(DEFAULT_CORPUS_DIR), help="corpus output directory")
+        sp.add_argument("--cache", default=str(DEFAULT_CACHE_DIR), help="where upstream checkouts are kept")
+        for a, kw in extra:
+            sp.add_argument(a, **kw)
+        return sp
+
+    add_src("add", cmd_sources_add, ("url", {}), ("--name", {}), ("--format", {"choices": ["auto", "sigma", "yara", "chain"]}),
+            ("--paths", {"nargs": "+"}), ("--exclude", {"nargs": "+"}), ("--license", {}), ("--attribution", {}),
+            ("--branch", {}), ("--ref", {"help": "pin to this commit instead of the branch head"}), ("--description", {}))
+    add_src("list", cmd_sources_list)
+    add_src("sync", cmd_sources_sync, ("names", {"nargs": "*"}),
+            ("--update", {"action": "store_true", "help": "move the pin to the newest upstream commit first"}),
+            ("--strict", {"action": "store_true", "help": "exit 1 if any rule failed or was flagged"}),
+            ("--json", {"action": "store_true"}), ("-v", {"dest": "verbose", "action": "store_true"}))
+    add_src("status", cmd_sources_status, ("--check-upstream", {"action": "store_true"}))
 
     args = p.parse_args(argv)
     return args.fn(args)

@@ -33,6 +33,7 @@ Chain is a detection language and engine. It does what YARA, Sigma and Suricata 
 - [Event schema](#event-schema)
 - [Using Chain inside an agent harness](#using-chain-inside-an-agent-harness)
 - [Importing Sigma and YARA](#importing-sigma-and-yara)
+- [Sources and the corpus](#sources-and-the-corpus)
 - [Testing and fuzzing rules](#testing-and-fuzzing-rules)
 - [Measuring rules on labeled data](#measuring-rules-on-labeled-data)
 - [CLI reference](#cli-reference)
@@ -336,8 +337,52 @@ chain import-sigma examples/sigma_encoded_powershell.yml > rules/imported/enc_ps
 chain import-yara  examples/sample.yar                    > rules/imported/ransom_note.yaml
 ```
 
-- **Sigma** is evaluated natively: selections, keywords, field modifiers (`contains`, `startswith`, `endswith`, `re`, `all`, `base64`), `and` / `or` / `not`, `1 of selection_*`, `all of them`. You can also embed a Sigma `detection` block in any Chain step via `where: {sigma: ...}`.
-- **YARA** text and regex strings convert to `strings` / `regex` matchers with `any`, `all` or `N of them`. Hex strings and modules are not converted yet — run native YARA as a sensor and feed its results in as `fields`.
+- **Sigma** is evaluated natively: selections, keywords, wildcards with Sigma escaping, field modifiers (`contains`, `startswith`, `endswith`, `re`, `all`, `base64`, `windash`, `cidr`, `exists`, `cased`), `and` / `or` / `not`, `1 of selection_*`, `all of them`. Logsource categories map to Chain event types (`process_creation` → `process.start`); unmapped ones become `<product>.<category>`. You can also embed a Sigma `detection` block in any Chain step via `where: {sigma: ...}`.
+- **YARA** text and regex strings convert to `strings` / `regex` matchers with `any`, `all` or `N of them`. Rules with hex strings, modules or other conditions are **delegated**: kept with their native text so yara-python can run them, with a Chain rule that matches the sensor's `fields.yara_matches`.
+
+## Sources and the corpus
+
+Chain is becoming one place for the rules that live today in Sigma, YARA, Suricata and other repositories. A **source** is an upstream repo pinned to a commit; **syncing** it converts every rule into Chain, checks it, and writes it to the corpus with an `origin:` block that records where it came from and how faithfully it converted.
+
+```bash
+chain sources add https://github.com/SigmaHQ/sigma --name sigmahq --format sigma \
+    --paths rules rules-threat-hunting rules-emerging-threats --license DRL-1.1
+chain sources sync sigmahq          # fetch the pinned commit, convert, check, write corpus/sigmahq/
+chain sources status --check-upstream
+chain sources sync sigmahq --update # move the pin to upstream's newest commit, then sync
+```
+
+The bundled `sources/sigmahq.yaml` pins the SigmaHQ repository. Syncing it today gives:
+
+```
+sigmahq @ 8a4813404ea3  license: DRL-1.1
+  files 3768  imported 3768 (exact 3750, lossy 18, delegated 0)  failed 0  skipped 0  flagged 7
+  fidelity notes (what Chain approximates; fix these to raise exact count):
+        8  unsupported modifier |base64offset ignored
+        6  unsupported modifier |fieldref ignored
+        2  unsupported modifier |i ignored
+        2  unsupported modifier |expand ignored
+        1  unsupported modifier |wide ignored
+  safety flags:
+        6  regex: nested quantifier (possible catastrophic backtracking)
+        1  matches an empty event of its own type
+```
+
+Every imported rule carries one of three **fidelity** labels:
+
+| Label | Meaning |
+|---|---|
+| `exact` | Chain evaluates it with the same meaning as the original engine |
+| `lossy` | Chain runs it, but something was dropped; `origin.notes` says what |
+| `delegated` | The original engine runs it as a sensor (e.g. YARA hex rules via yara-python); Chain matches on the sensor's output (`fields.yara_matches`) and keeps the native rule text in `origin.native` |
+
+The ranked list of fidelity notes in the report is the to-do list for raising the exact count.
+
+**Safety checks** run on everything imported, because upstream rules were written for other engines: regexes that backtrack catastrophically (static check plus timed probes), rules that match an empty event of their own type, and steps with no constraint at all. Flags are recorded in the report and in `origin.notes`; `--strict` refuses them. The check earned its keep on the first sync: a Sigma rule of the form `not private_ranges` with a `|cidr` modifier Chain didn't yet support had turned into "fire on every event", and the flag caught it before the modifier was implemented.
+
+Each source's corpus directory holds one YAML file per rule (mirroring the upstream path), `index.json` (id → path, fidelity, upstream hash; used to diff the next sync as added / updated / removed) and `report.json`. The corpus loads directly: `Engine.from_paths("corpus/sigmahq")`. Rules are indexed by event type, so an event only runs through the rules that can match it.
+
+The corpus is not committed, because each source has its own license; the manifests and converters are what the repo ships. A source can also be a local directory or a local git repo. CI syncs the pinned SigmaHQ commit on every run and keeps the report as an artifact.
 
 ## Testing and fuzzing rules
 
@@ -406,6 +451,10 @@ The bundled `examples/labeled_events.jsonl` is a small synthetic set that guards
 | `chain replay RULES LABELED.jsonl [--baseline F] [--min-precision P] [--min-recall R] [--out F] [--json] [-v]` | Score rules against labeled events: TP / FP / FN, precision, recall |
 | `chain import-sigma FILE` | Convert a Sigma rule to Chain YAML |
 | `chain import-yara FILE` | Convert simple YARA rules to Chain YAML |
+| `chain sources add URL [--name N] [--format F] [--paths P ...] [--exclude G ...] [--license L] [--ref SHA]` | Register an upstream rule repo, pinned to its current head |
+| `chain sources list` | Show registered sources |
+| `chain sources sync [NAME ...] [--update] [--strict] [--json] [-v]` | Pull the pinned commit, convert, check, write the corpus, report |
+| `chain sources status [--check-upstream]` | Corpus counts per source; whether upstream has moved |
 
 All rule commands accept `--clusters DIR` (default: `clusters/`).
 
@@ -422,12 +471,15 @@ chain/
   engine.py        sequence state machine, event -> Verdict
   verdict.py       actions, evidence trail, explain()
   hooks.py         ChainGuard: harness hook points and enforcement
-  importers/       Sigma (native evaluation + converter), YARA (basic)
+  importers/       Sigma (native evaluation + converter), YARA (text/regex; the rest delegated)
+  corpus/          source manifests, fetch, sync pipeline, safety checks, report
   testing.py       inline tests, mutation fuzzer
   replay.py        labeled replay, precision / recall per rule
   cli.py           chain CLI
 rules/ai/          injection-to-exfil, intent/action mismatch
 rules/classic/     phish-to-ransomware, obfuscated commands, rare admin tools, brute force, port scan, login without MFA
+sources/           manifests of upstream rule repos (SigmaHQ ...), pinned to a commit
+corpus/            built by `chain sources sync`; not committed (licenses differ per source)
 clusters/          seed semantic clusters (prompt injection, malicious commands)
 examples/          harness demo, sample + labeled events, Sigma and YARA rules to import
 tests/             pytest suite
@@ -469,7 +521,7 @@ Chain is becoming one place for the rules, signatures and IOCs that live today i
 | Phase | Goal |
 |---|---|
 | **Engine core + 1** ✅ | Rule language, taint, tiered matching, counting, "not followed by", replay with precision/recall |
-| **A. Source registry** | Pin upstream rule repos as sources, sync them into a corpus with origin, license and fidelity per rule |
+| **A. Source registry** ✅ | Pin upstream rule repos as sources, sync them into a corpus with origin, license and fidelity per rule |
 | **B. Format coverage** | Full Sigma (correlation, counting), YARA (hex, conditions), Suricata parsing; differential tests against the original engines |
 | **C. IOC layer** | IOC store with expiry, STIX/TAXII and MISP feeds, `ioc:` predicate |
 | **D. Unification + quality** | Merge equivalent rules, quality scores, ATT&CK / ATLAS coverage map, rule lifecycle |

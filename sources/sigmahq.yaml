@@ -1,0 +1,23 @@
+name: sigmahq
+url: https://github.com/SigmaHQ/sigma
+ref: 8a4813404ea3074890e0cda9272d4d1a8b2941d6
+branch: master
+format: sigma
+paths:
+- rules
+- rules-threat-hunting
+- rules-emerging-threats
+- rules-compliance
+- rules-dfir
+exclude: []
+skip_status:
+- deprecated
+- unsupported
+license: DRL-1.1
+license_url: ''
+attribution: SigmaHQ and the rule authors
+schedule: weekly
+description: SigmaHQ main rule repository
+added: '2026-10-10T10:27:13+00:00'
+last_sync: '2026-10-10T10:31:59+00:00'
+last_sync_ref: 8a4813404ea3074890e0cda9272d4d1a8b2941d6
