@@ -10,7 +10,7 @@ It is three things:
 |---|---|---|
 | **Engine** | The rule language and runtime: sequences, taint, tiered matching, counting, absence, replay | Built (see [FEATURES.md](FEATURES.md)) |
 | **Corpus** | Every rule, signature and IOC from every source, converted to Chain, with origin, license, fidelity and quality tracked per item | Phase A onward |
-| **AI layer** | LLMs and agents search, run, explain and write rules; a gated loop improves the corpus over time | Phases E and F |
+| **AI layer** | LLMs and agents search, run, explain and write rules; a gated loop improves the corpus over time | Phases F and G |
 
 ## Principles
 
@@ -49,36 +49,45 @@ Unified event schema, normalization, tiered matchers, provenance and taint, sequ
 - **Suricata:** rule parser and mapping onto network events with protocol fields. Packet matching delegated to Suricata.
 - **Differential testing:** the original engine and the Chain conversion run on the same samples; every mismatch is reported and lowers the fidelity label.
 
-### Phase C — IOC and threat intel layer
+### Phase C — Context and intent on the corpus
+
+The engine already has context (taint through artifacts and agent sessions, attribution, `rare:` baselines, `same:`, trust levels) and intent (intent-vs-action rules, classifier labels, semantic clusters, LLM judge). This phase makes them stronger and applies them to every rule in the corpus, not just hand-written ones. An imported Sigma rule is a flat field match; in Chain it should be able to say "…and the process descends from an untrusted email", "…first time on this host", "…while the agent's context is tainted".
+
+- **Context overlays.** Attach `tainted_by`, `rare:`, trust and `same:` conditions to imported rules without editing them: an overlay file per source, plus auto-derived variants for rule families (every `process_creation` rule gains an optional "descends from untrusted content" form). Overlays survive re-sync because they key on upstream id.
+- **Intent models.** Trained classifiers per label (injection, exfiltration, destructive) replacing the keyword stub; a real embedding model with a vector index for the clusters; a built-in Claude judge with the existing safeguards. Each swap is measured with `chain replay` before it ships.
+- **Intent for agents.** Map the user's stated task to allowed action classes (read-only, internal write, external send, destructive), so intent-vs-action is a general mechanism rather than one rule.
+- **Evasion resistance.** Full Unicode confusables table, string-concat and variable-substitution unrolling, cross-document chunk reassembly, each with a matching fuzz mutator kept above the CI recall gate.
+
+### Phase D — IOC and threat intel layer
 
 - IOC store: hashes, IPs, domains, URLs, JA3/JA4, certificates, each with confidence, first/last seen and expiry.
 - Feed connectors: STIX/TAXII, MISP, CSV and JSON feeds.
 - `ioc:` predicate for rules (`where: {fields.dest_ip: {ioc: c2}}`) backed by fast set lookups, not one rule per IOC.
 - IOCs linked to campaigns, techniques and the rules that use them.
 
-### Phase D — Unification and quality
+### Phase E — Unification and quality
 
 - Find equivalent rules across sources; merge into one canonical rule with aliases.
 - Quality score per rule from tests, replay precision, false-positive history and upstream upkeep.
 - Coverage map against ATT&CK and ATLAS: what is covered, by which rules, and the gaps.
 - Rule lifecycle: draft → shadow → alert → enforce. Versioned corpus releases as rule packs.
 
-### Phase E — Ready for LLMs and agents
+### Phase F — Ready for LLMs and agents
 
-- A rule card per rule: what it detects, example events, known false positives, data it needs.
+- A rule card per rule: what it detects, its context conditions, example events, known false positives, data it needs.
 - Published JSON Schema for the rule language, so LLMs write valid rules first time.
 - Semantic search over the whole corpus.
 - MCP server: `search_rules`, `evaluate_event`, `check_ioc`, `explain_verdict`, `propose_rule`; proxy mode in front of other MCP servers.
 - Integrations for common agent frameworks, built on `ChainGuard`.
 
-### Phase F — Self-evolving and self-healing
+### Phase G — Self-evolving and self-healing
 
 - Health monitoring flags rules that never fire, false-positive spikes, upstream changes that broke an import, log formats that drifted, and fuzz techniques that now evade a rule.
 - Repair loop: an LLM proposes a fix → tests, fuzzing and replay → human approval → shadow mode → promotion.
 - Rule generation from new intel, from misses in replay, and from evasions the fuzzer finds, through the same gates.
 - Every change is a git commit carrying its evidence; every change can be rolled back.
 
-### Phase G — Production scale
+### Phase H — Production scale
 
 - Pluggable state store with Redis; each customer's data kept separate; taint and sequence state expire.
 - Time-decayed baselines. Asset and identity enrichment hooks.
@@ -88,13 +97,13 @@ Unified event schema, normalization, tiered matchers, provenance and taint, sequ
 ## Order
 
 ```
-A ──► B ──┐
-A ──► C ──┼──► D ──► E ──► F
-          │
-G (any time; required before production)
+A ──► B ──► C ──┐
+A ──► D ────────┼──► E ──► F ──► G
+                │
+H (any time; required before production)
 ```
 
-A first. B and C both build on A and can run in parallel. D needs B and C. E's MCP server can start early, but rule cards and search need D. F needs D's lifecycle states and E's LLM tooling. G can run alongside anything and must be done before production.
+A first. B (format coverage) then C (context and intent on the corpus) are the core: they are what makes the corpus more than a format converter. D (IOCs) builds on A alone and can run alongside B and C. E needs C and D. F's MCP server can start early, but rule cards and search need E. G needs E's lifecycle states and F's LLM tooling. H can run alongside anything and must be done before production.
 
 ## Open decisions
 

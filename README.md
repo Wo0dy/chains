@@ -523,11 +523,12 @@ Chain is becoming one place for the rules, signatures and IOCs that live today i
 | **Engine core + 1** ✅ | Rule language, taint, tiered matching, counting, "not followed by", replay with precision/recall |
 | **A. Source registry** ✅ | Pin upstream rule repos as sources, sync them into a corpus with origin, license and fidelity per rule |
 | **B. Format coverage** | Full Sigma (correlation, counting), YARA (hex, conditions), Suricata parsing; differential tests against the original engines |
-| **C. IOC layer** | IOC store with expiry, STIX/TAXII and MISP feeds, `ioc:` predicate |
-| **D. Unification + quality** | Merge equivalent rules, quality scores, ATT&CK / ATLAS coverage map, rule lifecycle |
-| **E. LLM + agent ready** | Rule cards, JSON Schema, semantic search, MCP server and proxy |
-| **F. Self-evolving** | Health monitoring, gated LLM repair and generation, every change a reversible commit |
-| **G. Production scale** | Redis state per customer, decayed baselines, enrichment, hot reload, background alert rules |
+| **C. Context + intent on the corpus** | Taint, baselines and trust overlays on imported rules; trained intent classifiers, real embeddings, built-in judge; agent intent-vs-action as a general mechanism; evasion resistance |
+| **D. IOC layer** | IOC store with expiry, STIX/TAXII and MISP feeds, `ioc:` predicate |
+| **E. Unification + quality** | Merge equivalent rules, quality scores, ATT&CK / ATLAS coverage map, rule lifecycle |
+| **F. LLM + agent ready** | Rule cards, JSON Schema, semantic search, MCP server and proxy |
+| **G. Self-evolving** | Health monitoring, gated LLM repair and generation, every change a reversible commit |
+| **H. Production scale** | Redis state per customer, decayed baselines, enrichment, hot reload, background alert rules |
 
 ## Production swaps
 
