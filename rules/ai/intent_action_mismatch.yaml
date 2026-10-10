@@ -1,0 +1,35 @@
+id: ai_intent_action_mismatch
+title: Read-only task followed by an external write action
+description: >
+  The user asked for a read-only task (summarize, explain, translate, review) but the
+  agent attempts to send or upload data externally in the same session.
+severity: high
+action: require_approval
+tags: [ai, intent_mismatch]
+window: {steps: 15}
+sequence:
+  - name: ask
+    event: ai.prompt
+    where:
+      trust: user
+    match:
+      any:
+        - regex: '\b(summari[sz]e|explain|translate|review|read|what does)\b'
+  - name: act
+    event: ai.tool_call
+    where:
+      tool.name: [send_email, http_post, upload_file, post_message, create_gist]
+      tool.dest_external: true
+tests:
+  - name: summarize then upload
+    expect: fire
+    expect_action: require_approval
+    fuzz: false
+    events:
+      - {type: ai.prompt, session_id: s1, spans: [{text: Please summarize invoice.pdf, source: user, trust: user}]}
+      - {type: ai.tool_call, session_id: s1, fields: {trust: system}, tool: {name: http_post, args: {url: "https://paste.example/new"}, dest: paste.example, dest_external: true}}
+  - name: send requested explicitly
+    expect: no_fire
+    events:
+      - {type: ai.prompt, session_id: s2, spans: [{text: Email the board deck to the investors, source: user, trust: user}]}
+      - {type: ai.tool_call, session_id: s2, fields: {trust: system}, tool: {name: send_email, args: {to: vc@fund.com}, dest: vc@fund.com, dest_external: true}}

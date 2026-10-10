@@ -1,0 +1,5 @@
+{"type": "email.attachment", "host": "ws-17", "user": "priya", "fields": {"trust": "untrusted", "filename": "invoice.iso"}, "outputs": ["file:sha256:aa11"]}
+{"type": "file.exec", "host": "ws-17", "user": "priya", "inputs": ["file:sha256:aa11"], "outputs": ["proc:4242"], "fields": {"image": "invoice.exe", "signed": false}}
+{"type": "process.start", "host": "ws-17", "inputs": ["proc:4242"], "outputs": ["proc:4243"], "fields": {"image": "cmd.exe", "command_line": "c^m^d /c v^s^s^a^d^m^i^n delete shadows /all /quiet"}}
+{"type": "process.capability", "host": "ws-17", "inputs": ["proc:4242"], "fields": {"capabilities": ["encrypt_bulk"]}}
+{"type": "net.flow", "host": "ws-17", "inputs": ["proc:4242"], "fields": {"dst": "203.0.113.9", "beacon_score": 0.91}}

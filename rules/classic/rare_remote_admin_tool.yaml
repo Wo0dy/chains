@@ -1,0 +1,25 @@
+id: classic_rare_remote_admin_tool
+title: Remote admin tool never seen before on this host
+description: Context-aware version of a static "psexec executed" rule. Fires only when it is new for the host.
+severity: medium
+action: alert
+tags: [lateral_movement, attack:T1569.002, baseline]
+sequence:
+  - name: run
+    event: process.start
+    where:
+      fields.image_name: [psexec.exe, paexec.exe, anydesk.exe, atera.exe, screenconnect.exe, rclone.exe]
+      rare: {field: fields.image_name, by: host, max_seen: 0}
+tests:
+  - name: first use on host
+    expect: fire
+    fuzz: false
+    events:
+      - {type: process.start, host: fin-db-01, fields: {image_name: rclone.exe}}
+  - name: routine on the IT jump box
+    expect: no_fire
+    baseline:
+      - {type: process.start, host: it-jump-01, fields: {image_name: psexec.exe}}
+      - {type: process.start, host: it-jump-01, fields: {image_name: psexec.exe}}
+    events:
+      - {type: process.start, host: it-jump-01, fields: {image_name: psexec.exe}}

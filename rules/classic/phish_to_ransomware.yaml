@@ -1,0 +1,47 @@
+id: classic_phish_to_ransomware
+title: External attachment leads to unsigned execution, ransomware behavior and beaconing
+description: >
+  Cross-domain chain that would need a YARA rule, two Sigma rules, a Suricata rule and
+  manual SIEM correlation. Provenance links each step to the original attachment.
+severity: critical
+action: alert
+response: [isolate_host, kill_process_tree, open_case]
+tags: [ransomware, phishing, attack:T1566.001, attack:T1486, attack:T1490]
+group_by: host
+window: {seconds: 7200}
+sequence:
+  - name: attach
+    event: email.attachment
+    where:
+      trust: {max: external}
+  - name: run
+    event: [file.exec, process.start]
+    tainted_by: attach
+    where:
+      fields.signed: false
+  - name: impact
+    event: process.capability
+    tainted_by: attach
+    where:
+      fields.capabilities: [encrypt_bulk, delete_shadow_copies, disable_recovery]
+  - name: c2
+    event: net.flow
+    tainted_by: attach
+    where:
+      fields.beacon_score: {gte: 0.8}
+tests:
+  - name: full chain
+    expect: fire
+    fuzz: false
+    events:
+      - {type: email.attachment, host: ws-17, user: priya, fields: {trust: untrusted, sender: billing@0ffice-invoices.co, filename: invoice.iso}, outputs: ["file:sha256:aa11"]}
+      - {type: file.exec, host: ws-17, user: priya, inputs: ["file:sha256:aa11"], outputs: ["proc:4242"], fields: {image: 'C:\Users\priya\Downloads\invoice.exe', signed: false}}
+      - {type: process.capability, host: ws-17, inputs: ["proc:4242"], fields: {capabilities: [enumerate_files, encrypt_bulk]}}
+      - {type: net.flow, host: ws-17, inputs: ["proc:4242"], fields: {dst: 203.0.113.9, beacon_score: 0.93}}
+  - name: same behavior but no link to the attachment
+    expect: no_fire
+    events:
+      - {type: email.attachment, host: ws-17, fields: {trust: untrusted}, outputs: ["file:sha256:aa11"]}
+      - {type: file.exec, host: ws-17, inputs: ["file:sha256:other"], outputs: ["proc:1"], fields: {signed: false}}
+      - {type: process.capability, host: ws-17, inputs: ["proc:1"], fields: {capabilities: [encrypt_bulk]}}
+      - {type: net.flow, host: ws-17, inputs: ["proc:1"], fields: {beacon_score: 0.95}}

