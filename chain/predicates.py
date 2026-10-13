@@ -102,6 +102,14 @@ def check_where(event: Event, where: dict[str, Any], baseline: BaselineStore | N
                 return False, evidence
             evidence.append(f"rare: {field}={event.get(field)!r} seen {n}x for {by}={event.get(by)!r}")
             continue
+        if path == "suricata":
+            from .suricata import SuricataDetection
+
+            det = cond if isinstance(cond, SuricataDetection) else SuricataDetection(cond)
+            if not det.matches(event):
+                return False, evidence
+            evidence.append(f"suricata sid {det.sid}")
+            continue
         if path == "yara":
             from .yara import YaraDetection
 

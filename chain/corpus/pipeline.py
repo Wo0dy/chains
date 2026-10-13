@@ -23,6 +23,7 @@ from typing import Any
 import yaml
 
 from ..importers.sigma import SigmaUnsupported, sigma_import, sigma_import_correlation
+from ..importers.suricata import link_flowbits, suricata_import
 from ..importers.yara import YaraContext, yara_import
 from ..yara import parse_file as parse_yara_file
 from ..rules import Origin, load_rule
@@ -33,6 +34,7 @@ YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 YAML_DUMPER = getattr(yaml, "CSafeDumper", yaml.SafeDumper)
 SIGMA_EXT = {".yml", ".yaml"}
 YARA_EXT = {".yar", ".yara"}
+SURICATA_EXT = {".rules"}
 SKIP_DIRS = {".git", ".github", "tests", "test", "deprecated", "unsupported"}
 
 
@@ -170,6 +172,10 @@ def _detect_format(path: Path, declared: str) -> str | None:
         return "yara" if ext in YARA_EXT else None
     if declared == "chain":
         return "chain" if ext in SIGMA_EXT else None
+    if declared == "suricata":
+        return "suricata" if ext in SURICATA_EXT else None
+    if ext in SURICATA_EXT:
+        return "suricata"
     if ext in YARA_EXT:
         return "yara"
     if ext in SIGMA_EXT:
@@ -216,6 +222,8 @@ def _import_file(src: Source, root: Path, path: Path, yara_rules: YaraContext | 
         return [_import_sigma(src, relp, text)]
     if fmt == "yara":
         return _import_yara(src, relp, text, yara_rules)
+    if fmt == "suricata":
+        return _import_suricata(src, relp, text)
     if fmt == "chain":
         return [_import_chain(src, relp, text)]
     return [(Item(relp, "skipped", reason="unknown format"), None)]
@@ -299,6 +307,28 @@ def _import_yara(src: Source, relp: str, text: str, extra: YaraContext | None = 
     return out
 
 
+def _import_suricata(src: Source, relp: str, text: str) -> list[tuple[Item, dict[str, Any] | None]]:
+    try:
+        imports = suricata_import(text, src.variables or None)
+    except Exception as e:  # noqa: BLE001
+        return [(Item(relp, "failed", reason=f"parse: {type(e).__name__}: {str(e).splitlines()[0]}"), None)]
+    if not imports:
+        return [(Item(relp, "skipped", reason="no enabled rules in file"), None)]
+    link_flowbits(imports)
+    out = []
+    for imp in imports:
+        if not imp.rule:
+            out.append((Item(f"{relp}#line{imp.meta.get('line', '?')}", "failed", reason=imp.notes[0]), None))
+            continue
+        rule = dict(imp.rule)
+        fid = "delegated" if imp.delegated else ("lossy" if imp.notes else "exact")
+        rule["origin"] = _origin(src, relp, text, format="suricata", upstream_id=imp.sid, fidelity=fid,
+                                 notes=list(imp.notes), native=imp.source if imp.delegated else None,
+                                 references=[str(x) for x in imp.meta.get("references", []) if x])
+        out.append((Item(f"{relp}#{imp.sid}", "imported", rule_id=rule["id"], fidelity=fid, notes=list(imp.notes)), rule))
+    return out
+
+
 def _import_chain(src: Source, relp: str, text: str) -> tuple[Item, dict[str, Any] | None]:
     try:
         docs = [d for d in yaml.load_all(text, Loader=YAML_LOADER) if d]
@@ -313,7 +343,7 @@ def _import_chain(src: Source, relp: str, text: str) -> tuple[Item, dict[str, An
 
 def _corpus_path(item: Item) -> str:
     base = item.path
-    if "#" in base:                                   # one YARA file, many rules
+    if "#" in base:                                   # one YARA / Suricata file, many rules
         file, name = base.split("#", 1)
         return f"{Path(file).with_suffix('')}/{name}.yaml"
     return str(Path(base).with_suffix(".yaml"))

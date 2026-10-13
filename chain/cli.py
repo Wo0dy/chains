@@ -231,7 +231,7 @@ def main(argv: list[str] | None = None) -> int:
             sp.add_argument(a, **kw)
         return sp
 
-    add_src("add", cmd_sources_add, ("url", {}), ("--name", {}), ("--format", {"choices": ["auto", "sigma", "yara", "chain"]}),
+    add_src("add", cmd_sources_add, ("url", {}), ("--name", {}), ("--format", {"choices": ["auto", "sigma", "yara", "suricata", "chain"]}),
             ("--paths", {"nargs": "+"}), ("--exclude", {"nargs": "+"}), ("--license", {}), ("--attribution", {}),
             ("--branch", {}), ("--ref", {"help": "pin to this commit instead of the branch head"}), ("--description", {}))
     add_src("list", cmd_sources_list)

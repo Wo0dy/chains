@@ -24,7 +24,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
-FORMATS = {"auto", "sigma", "yara", "chain"}
+FORMATS = {"auto", "sigma", "yara", "suricata", "chain"}
 DEFAULT_SOURCES_DIR = Path("sources")
 DEFAULT_CACHE_DIR = Path(".chain-cache/sources")
 DEFAULT_CORPUS_DIR = Path("corpus")
@@ -43,6 +43,7 @@ class Source(BaseModel):
     license_url: str = ""
     attribution: str = ""
     schedule: str = "weekly"           # informational: how often to run sync
+    variables: dict[str, str] = Field(default_factory=dict)   # Suricata $HOME_NET etc.; Sigma placeholders
     description: str = ""
     added: str = ""
     last_sync: str | None = None

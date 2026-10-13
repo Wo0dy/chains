@@ -97,7 +97,10 @@ Status: **Built** = working in this scaffold with tests · **Stub** = interface 
 | `chain import-sigma` converter | Built |
 | `chain import-yara` for text/regex strings with `any/all/N of them` | Built |
 | YARA modules (pe, math, hash …) in Chain's own evaluator | Planned (delegated meanwhile) |
-| Suricata rule import | Planned |
+| Native Suricata / Snort evaluation: header + variables, sticky buffers and legacy modifiers with field aliases, content position semantics, pcre, bsize/urilen/isdataat, transforms, engine events | Built |
+| Suricata threshold / detection_filter → count steps; flowbits isset → sequence by flow_id (same source) | Built |
+| Suricata rules needing packet data are delegated (matched on `fields.alert.signature_id`) | Built |
+| Suricata byte_test / byte_jump / lua / raw payload in Chain's own evaluator | Planned (delegated meanwhile) |
 
 ## 8b. Sources and corpus (roadmap Phase A)
 | Feature | Status |
@@ -110,7 +113,7 @@ Status: **Built** = working in this scaffold with tests · **Stub** = interface 
 | Safety checks: catastrophic regex (static + timed probes), matches-everything, unconstrained steps; `--strict` refuses them | Built |
 | Sync report: counts, fidelity notes ranked by frequency (the Phase B priority list), failures, flags, added/updated/removed vs last sync | Built |
 | `index.json` + `report.json` per source; corpus loads straight into `Engine.from_paths` | Built |
-| Suricata source format | Planned (Phase B) |
+| Suricata source format (`.rules`, `variables:` in the manifest) | Built |
 | Corpus-wide dedup, quality scores, lifecycle states | Planned (Phase D) |
 
 ## 9. Testing and quality

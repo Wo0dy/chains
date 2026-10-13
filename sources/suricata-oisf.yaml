@@ -1,0 +1,20 @@
+name: suricata-oisf
+url: https://github.com/OISF/suricata
+ref: 4badfd13f43e112dd61c5cbab5718765512ed5ad
+branch: main
+format: suricata
+paths:
+- rules
+exclude: []
+skip_status:
+- deprecated
+- unsupported
+license: GPL-2.0
+license_url: ''
+attribution: Open Information Security Foundation
+schedule: weekly
+variables: {}
+description: Suricata's own protocol-event rules (app-layer / decoder anomalies)
+added: '2026-10-13T11:01:52+00:00'
+last_sync: '2026-10-13T11:04:21+00:00'
+last_sync_ref: 4badfd13f43e112dd61c5cbab5718765512ed5ad

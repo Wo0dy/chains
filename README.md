@@ -366,6 +366,7 @@ chain import-yara  examples/sample.yar                    > rules/imported/ranso
 - **Sigma** is evaluated natively: selections, keywords, wildcards with Sigma escaping, every field modifier the spec defines except date parts (`contains`, `startswith`, `endswith`, `all`, `re` with `i`/`m`/`s`, `base64`, `base64offset`, `utf16le`/`utf16be`/`utf16`/`wide`, `windash`, `cidr`, `exists`, `cased`, `gt`/`gte`/`lt`/`lte`, `fieldref`, `expand` with a placeholder map), `and` / `or` / `not`, `1 of selection_*`, `all of them`. Logsource categories map to Chain event types (`process_creation` → `process.start`); unmapped ones become `<product>.<category>`.
 - **Sigma aggregations and correlations** become Chain sequences. Legacy `… | count(F) by G > N` with a `timeframe` converts to a `count:` step grouped by `G` (42 of the 55 real ones in SigmaHQ convert; `near`, `sum()` and `< N` thresholds are reported as unsupported). Correlation rules (`event_count`, `value_count`, `temporal`, `temporal_ordered`) convert to count steps or ordered sequences with the referenced rules' detections as steps; `group-by` lists become a composite `group_by`. The sync pipeline resolves the references in a second pass. You can also embed a Sigma `detection` block in any Chain step via `where: {sigma: ...}`.
 - **YARA** rules are evaluated natively over an event's file content (`fields.content` as latin-1 text or bytes, or `fields.content_b64`, with `fields.size` and the `filename` / `filepath` / `extension` / `filetype` / `owner` externals). Supported: text strings with `nocase` / `wide` / `ascii` / `fullword` / `xor` / `base64` / `base64wide`, hex strings with `??` and nibble wildcards, jumps and alternatives, regex strings with `i` / `s`; conditions with `and` / `or` / `not`, `N of ($x*)` / `them` / `N%`, `$a at` / `in`, `#a`, `@a[i]`, `!a[i]`, `uintN` / `intN` reads, `filesize`, arithmetic, `for … of … : (…)` and `for i in (…) : (…)`, `contains` / `startswith` / `matches` on externals, and references to other rules (resolved across the whole source). Rules that call modules (`pe.`, `math.`, `hash.` …), use `entrypoint`, or put `wide` on a regex are **delegated**: kept with their native text (plus imports and referenced rules) so yara-python can run them, with a Chain rule that matches the sensor's `fields.yara_matches`. A differential test runs the same samples through yara-python and the native evaluator and fails on any disagreement.
+- **Suricata / Snort** rules are evaluated natively against protocol events. The header (addresses with `$HOME_NET`-style variables, ports, direction) is checked when the event carries addresses; each sticky buffer or legacy modifier (`http.uri`, `http.host`, `http.user_agent`, `http.method`, `http.header`, `dns.query`, `tls.sni`, `ja3.hash`, `file.name` …) maps to a list of field aliases so EVE records, Sigma-style fields and Chain's own tool-bridge events all work; `content` (with `nocase`, `depth` / `offset` / `distance` / `within`, `startswith` / `endswith`, negation, `|hex|`), `pcre` (buffer flags, `R`), `bsize`, `urilen`, `isdataat`, transforms (`to_lowercase`, `dotprefix`, `strip_whitespace` …), `app-layer-event` / `decode-event` / `stream-event`, `threshold` / `detection_filter` (→ count steps), and `flowbits` (`isset` → a two-step sequence grouped by `flow_id` when the setting rule is in the same source). Rules that need packet data (raw-payload `content` / `pcre`, `byte_test`, `dsize`, header-only transport rules) are **delegated**: Suricata runs them and Chain matches its alerts on `fields.alert.signature_id`. Source manifests can set `variables:` (`HOME_NET`, `HTTP_PORTS` …); the defaults are Suricata's.
 
 ## Sources and the corpus
 
@@ -379,7 +380,16 @@ chain sources status --check-upstream
 chain sources sync sigmahq --update # move the pin to upstream's newest commit, then sync
 ```
 
-The bundled manifests pin SigmaHQ (`sources/sigmahq.yaml`) and Neo23x0's signature-base YARA set (`sources/signature-base.yaml`). Syncing them today gives 3,766 of 3,768 Sigma rules exact and 5,618 of 5,904 YARA rules exact (286 delegated to yara-python for module calls). The SigmaHQ report:
+The bundled manifests pin SigmaHQ (`sources/sigmahq.yaml`), Neo23x0's signature-base YARA set (`sources/signature-base.yaml`) and Suricata's own protocol-event rules (`sources/suricata-oisf.yaml`). `chain sources status` today:
+
+```
+source               pinned        rules  exact  lossy  deleg  flags
+sigmahq              8a4813404ea3   3768   3766      2      0      7
+signature-base       94a1c48d7ab4   5904   5618      0    286      0
+suricata-oisf        4badfd13f43e    448    439      0      9      0
+```
+
+The SigmaHQ report:
 
 ```
 sigmahq @ 8a4813404ea3  license: DRL-1.1
@@ -474,7 +484,7 @@ The bundled `examples/labeled_events.jsonl` is a small synthetic set that guards
 | `chain replay RULES LABELED.jsonl [--baseline F] [--min-precision P] [--min-recall R] [--out F] [--json] [-v]` | Score rules against labeled events: TP / FP / FN, precision, recall |
 | `chain import-sigma FILE` | Convert a Sigma rule to Chain YAML |
 | `chain import-yara FILE` | Convert simple YARA rules to Chain YAML |
-| `chain sources add URL [--name N] [--format F] [--paths P ...] [--exclude G ...] [--license L] [--ref SHA]` | Register an upstream rule repo, pinned to its current head |
+| `chain sources add URL [--name N] [--format sigma\|yara\|suricata\|chain\|auto] [--paths P ...] [--exclude G ...] [--license L] [--ref SHA]` | Register an upstream rule repo, pinned to its current head |
 | `chain sources list` | Show registered sources |
 | `chain sources sync [NAME ...] [--update] [--strict] [--json] [-v]` | Pull the pinned commit, convert, check, write the corpus, report |
 | `chain sources status [--check-upstream]` | Corpus counts per source; whether upstream has moved |
@@ -495,7 +505,9 @@ chain/
   verdict.py       actions, evidence trail, explain()
   hooks.py         ChainGuard: harness hook points and enforcement
   bridge.py        tool-to-event bridge: tool calls as the classic events they cause
-  importers/       Sigma (native evaluation + converter), YARA (text/regex; the rest delegated)
+  importers/       Sigma, YARA and Suricata converters (fidelity notes, delegation)
+  yara.py          native YARA evaluation over file content
+  suricata.py      native Suricata / Snort evaluation over protocol events
   corpus/          source manifests, fetch, sync pipeline, safety checks, report
   testing.py       inline tests, mutation fuzzer
   replay.py        labeled replay, precision / recall per rule
@@ -548,7 +560,7 @@ Chain is becoming one place for the rules, signatures and IOCs that live today i
 |---|---|
 | **Engine core + 1** ✅ | Rule language, taint, tiered matching, counting, "not followed by", replay with precision/recall |
 | **A. Source registry** ✅ | Pin upstream rule repos as sources, sync them into a corpus with origin, license and fidelity per rule |
-| **B. Format coverage** | Sigma ✅ and YARA ✅ evaluated natively with fidelity labels; Suricata parsing and engine-level differential testing still open |
+| **B. Format coverage** ✅ | Sigma, YARA and Suricata evaluated natively with fidelity labels and delegation for what needs the original engine; corpus-wide differential runs still open |
 | **C. Context + intent on the corpus** | Taint, baselines and trust overlays on imported rules; trained intent classifiers, real embeddings, built-in judge; agent intent-vs-action as a general mechanism; evasion resistance |
 | **D. IOC layer** | IOC store with expiry, STIX/TAXII and MISP feeds, `ioc:` predicate |
 | **E. Unification + quality** | Merge equivalent rules, quality scores, ATT&CK / ATLAS coverage map, rule lifecycle |

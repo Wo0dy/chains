@@ -44,6 +44,7 @@ import yaml
 from pydantic import BaseModel, Field, field_validator
 
 from .importers.sigma import SigmaDetection
+from .suricata import SuricataDetection
 from .yara import compile_detection
 from .matchers import MatchExpr
 
@@ -166,6 +167,8 @@ class CompiledStep:
             self.where["sigma"] = SigmaDetection(self.where["sigma"]["detection"])
         if "yara" in self.where and isinstance(self.where["yara"], dict):
             self.where["yara"] = compile_detection(self.where["yara"])
+        if "suricata" in self.where and isinstance(self.where["suricata"], dict):
+            self.where["suricata"] = SuricataDetection(self.where["suricata"])
         self.match = MatchExpr(step.match) if step.match else None
         self.rare_keys = [(c.get("by", "host"), c["field"]) for k, c in step.where.items() if k == "rare"]
 
