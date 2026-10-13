@@ -44,7 +44,7 @@ Unified event schema, normalization, tiered matchers, provenance and taint, sequ
 
 ### Phase B — Full coverage of the three formats
 
-- **Sigma:** counting rules (`| count() > n`), correlation rules (map onto Chain sequences), log source and field mapping onto Chain's schema.
+- **Sigma** ✅: every spec modifier, legacy counting rules and correlation rules now convert (SigmaHQ: 3,766 of 3,768 exact; the two left reference an environment placeholder). Field-name mapping onto Chain's schema is still open.
 - **YARA:** hex strings, wildcards, jumps, full conditions. Modules (pe, elf, math …) delegated to yara-python.
 - **Suricata:** rule parser and mapping onto network events with protocol fields. Packet matching delegated to Suricata.
 - **Differential testing:** the original engine and the Chain conversion run on the same samples; every mismatch is reported and lowers the fidelity label.

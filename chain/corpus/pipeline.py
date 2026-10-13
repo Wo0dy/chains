@@ -22,12 +22,14 @@ from typing import Any
 
 import yaml
 
-from ..importers.sigma import SigmaUnsupported, sigma_import
+from ..importers.sigma import SigmaUnsupported, sigma_import, sigma_import_correlation
 from ..importers.yara import yara_import
 from ..rules import Origin, load_rule
 from .safety import check_rule
 from .sources import DEFAULT_CACHE_DIR, DEFAULT_CORPUS_DIR, Source, fetch, now, resolve_head, save_source
 
+YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+YAML_DUMPER = getattr(yaml, "CSafeDumper", yaml.SafeDumper)
 SIGMA_EXT = {".yml", ".yaml"}
 YARA_EXT = {".yar", ".yara"}
 SKIP_DIRS = {".git", ".github", "tests", "test", "deprecated", "unsupported"}
@@ -44,6 +46,7 @@ class Item:
     flags: list[str] = field(default_factory=list)   # safety flags
     reason: str | None = None       # why failed / skipped
     change: str | None = None       # added | updated | unchanged
+    deferred: Any = field(default=None, repr=False, compare=False)   # correlation doc awaiting its base rules
 
 
 @dataclass
@@ -111,6 +114,8 @@ class SyncReport:
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
+        for i in d["items"]:
+            i.pop("deferred", None)
         d.update(summary={"imported": self.imported, "failed": self.failed, "skipped": self.skipped,
                           "flagged": self.flagged, "fidelity": self.by_fidelity(), "changes": self.changes()},
                  notes=self.note_counts(), reasons=self.reason_counts(), flags=self.flag_counts())
@@ -151,7 +156,7 @@ def _generalize(text: str) -> str:
     text = re.sub(r"using \S+", "", text)
     text = re.sub(r"regex at \S+:", "regex:", text)
     text = re.sub(r"\d+-char", "N-char", text)
-    text = re.sub(r"condition '[^']*'", "condition '<x>'", text)
+    text = re.sub(r"condition ['\"].*", "condition '<x>'", text, flags=re.S)
     return " ".join(text.split())
 
 
@@ -215,9 +220,23 @@ def _import_file(src: Source, root: Path, path: Path) -> list[tuple[Item, dict[s
     return [(Item(relp, "skipped", reason="unknown format"), None)]
 
 
+def _sigma_origin(src: Source, relp: str, text: str, imp: Any) -> dict[str, Any]:
+    return _origin(src, relp, text, format="sigma", upstream_id=imp.meta["upstream_id"],
+                   upstream_name=imp.meta.get("name"), fidelity="lossy" if imp.notes else "exact",
+                   notes=list(imp.notes), status=imp.meta.get("status"), logsource=imp.meta["logsource"],
+                   falsepositives=[str(x) for x in imp.meta["falsepositives"]],
+                   references=[str(x) for x in imp.meta["references"]])
+
+
 def _import_sigma(src: Source, relp: str, text: str) -> tuple[Item, dict[str, Any] | None]:
     try:
-        imp = sigma_import(text)
+        docs = [d for d in yaml.load_all(text, Loader=YAML_LOADER) if d]
+        if len(docs) != 1:
+            raise SigmaUnsupported("multi-document rule collection")
+        if isinstance(docs[0], dict) and "correlation" in docs[0]:
+            # needs the rules it references: resolved after the first pass
+            return Item(relp, "deferred", deferred=docs[0]), None
+        imp = sigma_import(docs[0])
     except SigmaUnsupported as e:
         return Item(relp, "failed", reason=f"unsupported: {e}"), None
     except yaml.YAMLError as e:
@@ -228,11 +247,23 @@ def _import_sigma(src: Source, relp: str, text: str) -> tuple[Item, dict[str, An
     if status in src.skip_status:
         return Item(relp, "skipped", rule_id=imp.rule["id"], reason=f"status {status}"), None
     rule = dict(imp.rule)
-    rule["origin"] = _origin(src, relp, text, format="sigma", upstream_id=imp.meta["upstream_id"],
-                             fidelity="lossy" if imp.notes else "exact", notes=list(imp.notes),
-                             status=status, logsource=imp.meta["logsource"],
-                             falsepositives=[str(x) for x in imp.meta["falsepositives"]],
-                             references=[str(x) for x in imp.meta["references"]])
+    rule["origin"] = _sigma_origin(src, relp, text, imp)
+    return Item(relp, "imported", rule_id=rule["id"], fidelity=rule["origin"]["fidelity"], notes=list(imp.notes)), rule
+
+
+def _import_correlation(src: Source, relp: str, doc: dict[str, Any], lookup: dict[str, dict[str, Any]]) -> tuple[Item, dict[str, Any] | None]:
+    try:
+        imp = sigma_import_correlation(doc, lookup.get)
+    except SigmaUnsupported as e:
+        return Item(relp, "failed", reason=f"unsupported: {e}"), None
+    except (KeyError, TypeError, AttributeError, ValueError) as e:
+        return Item(relp, "failed", reason=f"malformed correlation: {type(e).__name__}: {e}"), None
+    status = imp.meta.get("status")
+    if status in src.skip_status:
+        return Item(relp, "skipped", rule_id=imp.rule["id"], reason=f"status {status}"), None
+    rule = dict(imp.rule)
+    text = yaml.safe_dump(doc, sort_keys=False)
+    rule["origin"] = _sigma_origin(src, relp, text, imp)
     return Item(relp, "imported", rule_id=rule["id"], fidelity=rule["origin"]["fidelity"], notes=list(imp.notes)), rule
 
 
@@ -255,7 +286,7 @@ def _import_yara(src: Source, relp: str, text: str) -> list[tuple[Item, dict[str
 
 def _import_chain(src: Source, relp: str, text: str) -> tuple[Item, dict[str, Any] | None]:
     try:
-        docs = [d for d in yaml.safe_load_all(text) if d]
+        docs = [d for d in yaml.load_all(text, Loader=YAML_LOADER) if d]
     except yaml.YAMLError as e:
         return Item(relp, "failed", reason=f"yaml: {str(e).splitlines()[0]}"), None
     if len(docs) != 1 or "sequence" not in docs[0]:
@@ -288,34 +319,53 @@ def sync_source(src: Source, corpus_dir: Path = DEFAULT_CORPUS_DIR, cache_dir: P
     seen_ids: dict[str, str] = {}
     written: dict[str, dict[str, Any]] = {}
 
+    def accept(item: Item, rule: dict[str, Any] | None) -> None:
+        if rule is not None:
+            try:
+                compiled = load_rule(rule, item.path)
+            except Exception as e:  # noqa: BLE001 - any schema problem is a failed import
+                item.outcome, item.reason, rule = "failed", f"schema: {str(e).splitlines()[0]}", None
+            else:
+                if compiled.id in seen_ids:
+                    item.outcome, item.reason, rule = "failed", f"duplicate id (also {seen_ids[compiled.id]})", None
+                else:
+                    seen_ids[compiled.id] = item.path
+                    item.flags = check_rule(compiled)
+                    if item.flags:
+                        rule["origin"]["notes"] = rule["origin"]["notes"] + [f"safety: {f}" for f in item.flags]
+                        if strict:
+                            item.outcome, item.reason, rule = "failed", f"strict: {item.flags[0]}", None
+        if rule is not None:
+            item.corpus_path = _corpus_path(item)
+            prev = previous.get(item.rule_id or "")
+            if prev is None:
+                item.change = "added"
+            elif prev.get("upstream_sha256") == rule["origin"]["upstream_sha256"] and prev.get("path") == item.corpus_path:
+                item.change = "unchanged"
+            else:
+                item.change = "updated"
+            written[item.corpus_path] = rule
+        report.items.append(item)
+
+    deferred: list[Item] = []
     for path in files:
         for item, rule in _import_file(src, root, path):
-            if rule is not None:
-                try:
-                    compiled = load_rule(rule, item.path)
-                except Exception as e:  # noqa: BLE001 - any schema problem is a failed import
-                    item.outcome, item.reason, rule = "failed", f"schema: {str(e).splitlines()[0]}", None
-                else:
-                    if compiled.id in seen_ids:
-                        item.outcome, item.reason, rule = "failed", f"duplicate id (also {seen_ids[compiled.id]})", None
-                    else:
-                        seen_ids[compiled.id] = item.path
-                        item.flags = check_rule(compiled)
-                        if item.flags:
-                            rule["origin"]["notes"] = rule["origin"]["notes"] + [f"safety: {f}" for f in item.flags]
-                            if strict:
-                                item.outcome, item.reason, rule = "failed", f"strict: {item.flags[0]}", None
-            if rule is not None:
-                item.corpus_path = _corpus_path(item)
-                prev = previous.get(item.rule_id or "")
-                if prev is None:
-                    item.change = "added"
-                elif prev.get("upstream_sha256") == rule["origin"]["upstream_sha256"] and prev.get("path") == item.corpus_path:
-                    item.change = "unchanged"
-                else:
-                    item.change = "updated"
-                written[item.corpus_path] = rule
-            report.items.append(item)
+            if item.outcome == "deferred":
+                deferred.append(item)
+            else:
+                accept(item, rule)
+
+    if deferred:
+        # Second pass: correlation rules reference base rules by name or id.
+        lookup: dict[str, dict[str, Any]] = {}
+        for rule in written.values():
+            o = rule.get("origin", {})
+            for key in (rule.get("id"), o.get("upstream_id"), o.get("upstream_name")):
+                if key:
+                    lookup.setdefault(str(key), rule)
+        for item in deferred:
+            doc, item.deferred = item.deferred, None
+            accept(*_import_correlation(src, item.path, doc, lookup))
 
     report.removed = sorted(set(previous) - set(seen_ids))
     _write_corpus(out_dir, written, report)
@@ -340,7 +390,7 @@ def _write_corpus(out_dir: Path, written: dict[str, dict[str, Any]], report: Syn
     for rel, rule in written.items():
         p = out_dir / rel
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(yaml.safe_dump(rule, sort_keys=False, allow_unicode=True, width=120))
+        p.write_text(yaml.dump(rule, Dumper=YAML_DUMPER, sort_keys=False, allow_unicode=True, width=120))
         o = rule["origin"]
         index[rule["id"]] = {"path": rel, "fidelity": o["fidelity"], "upstream_sha256": o["upstream_sha256"],
                              "upstream_path": o["path"], "status": o.get("status"), "severity": rule.get("severity"),

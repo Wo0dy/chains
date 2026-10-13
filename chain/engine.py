@@ -29,6 +29,10 @@ from .verdict import Evidence, Hit, Verdict
 MAX_PARTIALS = 256  # per rule per group; oldest dropped first
 
 
+def _group_key(event: Event, fields: tuple[str, ...]) -> tuple:
+    return tuple(event.get(f) for f in fields)
+
+
 @dataclass
 class Partial:
     next_idx: int
@@ -71,7 +75,7 @@ class Engine:
             else:
                 for p in pats:
                     self._exact[p].append(r)
-        self._group_fields = sorted({r.rule.group_by for r in self.rules})
+        self._group_fields = sorted({r.group_fields for r in self.rules})
         self._timed = {r.id for r in self.rules if r.steps[-1].spec.absent}
         self._ready: list[Verdict] = []   # absence verdicts resolved but not yet handed out
 
@@ -104,11 +108,11 @@ class Engine:
         text_cache: dict[bool, str] = {}
 
         # One event counts once per group, however many rules share that group.
-        for gb in self._group_fields:
-            self._group_count[(gb, event.get(gb))] += 1
+        for gf in self._group_fields:
+            self._group_count[(gf, _group_key(event, gf))] += 1
 
         for rule in self._candidates(event.type):
-            group = (rule.rule.group_by, event.get(rule.rule.group_by))
+            group = (rule.group_fields, _group_key(event, rule.group_fields))
             hit = self._advance(rule, event, taint, group, text_cache)
             if hit:
                 verdict.hits.append(hit)

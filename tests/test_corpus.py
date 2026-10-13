@@ -35,7 +35,7 @@ id: 22222222-2222-2222-2222-222222222222
 status: stable
 logsource: {category: network_connection, product: windows}
 detection:
-  selection: {CommandLine|base64offset|contains: cmd}
+  selection: {User|expand: '%admins%'}
   condition: selection
 """
 SIGMA_DEPRECATED = """
@@ -53,7 +53,7 @@ id: 44444444-4444-4444-4444-444444444444
 logsource: {product: windows, service: security}
 detection:
   selection: {EventID: 4625}
-  condition: selection | count() > 10
+  condition: selection | count() by TaskName < 5
 """
 SIGMA_BADREGEX = """
 title: Catastrophic
@@ -126,7 +126,7 @@ def test_sigma_import_reports_notes_and_meta():
     assert imp.rule["sequence"][0]["where"]["fields.platform"] == {"when_set": "windows"}
     assert imp.meta["status"] == "test" and imp.meta["falsepositives"] == ["Admin scripts"]
     lossy = sigma_import(SIGMA_LOSSY)
-    assert any("|base64offset" in n for n in lossy.notes)
+    assert any("%admins%" in n for n in lossy.notes)
 
 
 def test_sigma_import_rejects_what_chain_cannot_run():
@@ -222,7 +222,7 @@ def test_sync_outcomes_and_fidelity(synced):
     assert by_path["rules/windows/broken.yml"].outcome == "failed"
     assert by_path["rules/windows/badregex.yml"].flags and by_path["rules/windows/matchall.yml"].flags
     assert rep.license == "TEST-1.0"
-    assert ("unsupported modifier |base64offset ignored", 1) in rep.note_counts()
+    assert ("placeholder %admins% unresolved; treated as a wildcard", 1) in rep.note_counts()
 
 
 def test_sync_writes_corpus_index_report_and_origin(synced):

@@ -86,13 +86,14 @@ Status: **Built** = working in this scaffold with tests · **Stub** = interface 
 ## 8. Compatibility
 | Feature | Status |
 |---|---|
-| Native Sigma evaluation: selections, keywords, modifiers (`contains`, `startswith`, `endswith`, `re`, `all`, `base64`, `windash`, `exists`, `cased`), `and/or/not`, `1 of x*`, `all of them` | Built |
+| Native Sigma evaluation: selections, keywords, all spec modifiers except date parts (incl. `base64offset`, `utf16*`, `cidr`, `fieldref`, `gt/lt`, `re` flags, `expand` with placeholders), `and/or/not`, `1 of x*`, `all of them` | Built |
+| Sigma legacy aggregations (`count() by G > N` + timeframe) → count steps; correlation rules (event_count, value_count, temporal, temporal_ordered) → sequences, resolved in a second sync pass | Built (`near`, `sum`, `< N` reported unsupported) |
+| Composite (`[a, b]`) and global (`null`) `group_by` | Built |
 | Sigma logsource → event type mapping (40 categories; unmapped ones scope to `<product>.<category>`) | Built |
 | Importers report fidelity notes per rule (every dropped or approximated feature) | Built |
 | YARA rules Chain can't run are **delegated** (kept with native source, matched on `fields.yara_matches`) | Built |
 | `chain import-sigma` converter | Built |
 | `chain import-yara` for text/regex strings with `any/all/N of them` | Built |
-| Sigma modifiers `cidr`, `utf16*`, `base64offset`, `gt/lt`, `fieldref`, `expand`; Sigma aggregations and correlation rules | Planned (Phase B) |
 | YARA hex strings, full conditions and modules in Chain's own matchers | Planned (Phase B; delegated meanwhile) |
 | Suricata rule import | Planned |
 

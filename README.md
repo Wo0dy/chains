@@ -198,7 +198,7 @@ sequence:
 | `action` | `alert` | `allow` · `alert` · `redact` · `require_approval` · `block` |
 | `response` | `[]` | SOAR hints passed to the caller, e.g. `isolate_host`, `open_case` |
 | `confidence` | `0.8` | Base confidence, scaled by matcher scores |
-| `group_by` | `session_id` | Field that keys sequence state: `host`, `user`, any dotted path |
+| `group_by` | `session_id` | Field that keys sequence state: `host`, `user`, any dotted path; a list for a composite key (`[host, user]`); `null` for one global sequence |
 | `window` | none | `{seconds: N}` and/or `{steps: N}` — how long a partial sequence lives |
 | `sequence` | required | Ordered list of steps |
 | `tests` | `[]` | Inline positive and negative test cases |
@@ -363,7 +363,8 @@ chain import-sigma examples/sigma_encoded_powershell.yml > rules/imported/enc_ps
 chain import-yara  examples/sample.yar                    > rules/imported/ransom_note.yaml
 ```
 
-- **Sigma** is evaluated natively: selections, keywords, wildcards with Sigma escaping, field modifiers (`contains`, `startswith`, `endswith`, `re`, `all`, `base64`, `windash`, `cidr`, `exists`, `cased`), `and` / `or` / `not`, `1 of selection_*`, `all of them`. Logsource categories map to Chain event types (`process_creation` → `process.start`); unmapped ones become `<product>.<category>`. You can also embed a Sigma `detection` block in any Chain step via `where: {sigma: ...}`.
+- **Sigma** is evaluated natively: selections, keywords, wildcards with Sigma escaping, every field modifier the spec defines except date parts (`contains`, `startswith`, `endswith`, `all`, `re` with `i`/`m`/`s`, `base64`, `base64offset`, `utf16le`/`utf16be`/`utf16`/`wide`, `windash`, `cidr`, `exists`, `cased`, `gt`/`gte`/`lt`/`lte`, `fieldref`, `expand` with a placeholder map), `and` / `or` / `not`, `1 of selection_*`, `all of them`. Logsource categories map to Chain event types (`process_creation` → `process.start`); unmapped ones become `<product>.<category>`.
+- **Sigma aggregations and correlations** become Chain sequences. Legacy `… | count(F) by G > N` with a `timeframe` converts to a `count:` step grouped by `G` (42 of the 55 real ones in SigmaHQ convert; `near`, `sum()` and `< N` thresholds are reported as unsupported). Correlation rules (`event_count`, `value_count`, `temporal`, `temporal_ordered`) convert to count steps or ordered sequences with the referenced rules' detections as steps; `group-by` lists become a composite `group_by`. The sync pipeline resolves the references in a second pass. You can also embed a Sigma `detection` block in any Chain step via `where: {sigma: ...}`.
 - **YARA** text and regex strings convert to `strings` / `regex` matchers with `any`, `all` or `N of them`. Rules with hex strings, modules or other conditions are **delegated**: kept with their native text so yara-python can run them, with a Chain rule that matches the sensor's `fields.yara_matches`.
 
 ## Sources and the corpus
@@ -378,17 +379,13 @@ chain sources status --check-upstream
 chain sources sync sigmahq --update # move the pin to upstream's newest commit, then sync
 ```
 
-The bundled `sources/sigmahq.yaml` pins the SigmaHQ repository. Syncing it today gives:
+The bundled manifests pin SigmaHQ (`sources/sigmahq.yaml`) and Neo23x0's signature-base YARA set (`sources/signature-base.yaml`). Syncing SigmaHQ today gives:
 
 ```
 sigmahq @ 8a4813404ea3  license: DRL-1.1
-  files 3768  imported 3768 (exact 3750, lossy 18, delegated 0)  failed 0  skipped 0  flagged 7
+  files 3768  imported 3768 (exact 3766, lossy 2, delegated 0)  failed 0  skipped 0  flagged 7
   fidelity notes (what Chain approximates; fix these to raise exact count):
-        8  unsupported modifier |base64offset ignored
-        6  unsupported modifier |fieldref ignored
-        2  unsupported modifier |i ignored
-        2  unsupported modifier |expand ignored
-        1  unsupported modifier |wide ignored
+        2  placeholder %known_cdcs% unresolved; treated as a wildcard
   safety flags:
         6  regex: nested quantifier (possible catastrophic backtracking)
         1  matches an empty event of its own type
@@ -404,7 +401,7 @@ Every imported rule carries one of three **fidelity** labels:
 
 The ranked list of fidelity notes in the report is the to-do list for raising the exact count.
 
-**Safety checks** run on everything imported, because upstream rules were written for other engines: regexes that backtrack catastrophically (static check plus timed probes), rules that match an empty event of their own type, and steps with no constraint at all. Flags are recorded in the report and in `origin.notes`; `--strict` refuses them. The check earned its keep on the first sync: a Sigma rule of the form `not private_ranges` with a `|cidr` modifier Chain didn't yet support had turned into "fire on every event", and the flag caught it before the modifier was implemented.
+**Safety checks** run on everything imported, because upstream rules were written for other engines: regexes that backtrack catastrophically (static check plus timed probes), rules that match an empty event of their own type, and steps with no constraint at all. Flags are recorded in the report and in `origin.notes`; `--strict` refuses them. The check has earned its keep twice already: a `not private_ranges` rule with a then-unsupported `|cidr` modifier had turned into "fire on every event", and a `|fieldref` comparison matched when both fields were missing (`None == None`). Both were caught by the flag before they reached an engine.
 
 Each source's corpus directory holds one YAML file per rule (mirroring the upstream path), `index.json` (id → path, fidelity, upstream hash; used to diff the next sync as added / updated / removed) and `report.json`. The corpus loads directly: `Engine.from_paths("corpus/sigmahq")`. Rules are indexed by event type, so an event only runs through the rules that can match it.
 

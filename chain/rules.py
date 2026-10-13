@@ -116,6 +116,7 @@ class Origin(BaseModel):
     falsepositives: list[str] = Field(default_factory=list)
     references: list[str] = Field(default_factory=list)
     native: str | None = None            # original rule text for delegated rules
+    upstream_name: str | None = None     # Sigma `name:` (what correlation rules reference)
 
     @field_validator("fidelity")
     @classmethod
@@ -134,7 +135,7 @@ class Rule(BaseModel):
     response: list[str] = Field(default_factory=list)
     confidence: float = 0.8
     tags: list[str] = Field(default_factory=list)
-    group_by: str = "session_id"
+    group_by: str | list[str] | None = "session_id"   # one field, several (composite key) or None (global)
     window: Window = Field(default_factory=Window)
     sequence: list[Step]
     tests: list[dict[str, Any]] = Field(default_factory=list)
@@ -198,6 +199,13 @@ class CompiledRule:
     def id(self) -> str:
         return self.rule.id
 
+    @property
+    def group_fields(self) -> tuple[str, ...]:
+        gb = self.rule.group_by
+        if gb is None:
+            return ()
+        return (gb,) if isinstance(gb, str) else tuple(gb)
+
 
 def load_rule(data: dict[str, Any], source: str | None = None) -> CompiledRule:
     rule = Rule(**data, source_file=source)
@@ -209,7 +217,7 @@ def load_rules(path: str | Path) -> list[CompiledRule]:
     files = [path] if path.is_file() else sorted(path.rglob("*.y*ml"))
     rules = []
     for f in files:
-        for doc in yaml.safe_load_all(f.read_text()):
+        for doc in yaml.load_all(f.read_text(), Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader)):
             if doc:
                 rules.append(load_rule(doc, str(f)))
     return rules
