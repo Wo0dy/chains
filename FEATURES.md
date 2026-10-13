@@ -91,10 +91,12 @@ Status: **Built** = working in this scaffold with tests · **Stub** = interface 
 | Composite (`[a, b]`) and global (`null`) `group_by` | Built |
 | Sigma logsource → event type mapping (40 categories; unmapped ones scope to `<product>.<category>`) | Built |
 | Importers report fidelity notes per rule (every dropped or approximated feature) | Built |
-| YARA rules Chain can't run are **delegated** (kept with native source, matched on `fields.yara_matches`) | Built |
+| Native YARA evaluation over file content: text/hex/regex strings with all common modifiers, full condition grammar (of/for/at/in/#/@/!/uintN/filesize/arithmetic/rule references), externals | Built |
+| YARA rules Chain can't run (module calls, entrypoint, wide regex) are **delegated** (kept with native source + imports + referenced rules, matched on `fields.yara_matches`) | Built |
+| Differential test vs yara-python on the same samples | Built (test suite; corpus-wide run planned) |
 | `chain import-sigma` converter | Built |
 | `chain import-yara` for text/regex strings with `any/all/N of them` | Built |
-| YARA hex strings, full conditions and modules in Chain's own matchers | Planned (Phase B; delegated meanwhile) |
+| YARA modules (pe, math, hash …) in Chain's own evaluator | Planned (delegated meanwhile) |
 | Suricata rule import | Planned |
 
 ## 8b. Sources and corpus (roadmap Phase A)

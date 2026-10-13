@@ -44,6 +44,7 @@ import yaml
 from pydantic import BaseModel, Field, field_validator
 
 from .importers.sigma import SigmaDetection
+from .yara import compile_detection
 from .matchers import MatchExpr
 
 ACTION_RANK = {"allow": 0, "alert": 1, "redact": 2, "require_approval": 3, "block": 4}
@@ -163,6 +164,8 @@ class CompiledStep:
         self.where = dict(step.where)
         if "sigma" in self.where:
             self.where["sigma"] = SigmaDetection(self.where["sigma"]["detection"])
+        if "yara" in self.where and isinstance(self.where["yara"], dict):
+            self.where["yara"] = compile_detection(self.where["yara"])
         self.match = MatchExpr(step.match) if step.match else None
         self.rare_keys = [(c.get("by", "host"), c["field"]) for k, c in step.where.items() if k == "rare"]
 

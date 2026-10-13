@@ -365,7 +365,7 @@ chain import-yara  examples/sample.yar                    > rules/imported/ranso
 
 - **Sigma** is evaluated natively: selections, keywords, wildcards with Sigma escaping, every field modifier the spec defines except date parts (`contains`, `startswith`, `endswith`, `all`, `re` with `i`/`m`/`s`, `base64`, `base64offset`, `utf16le`/`utf16be`/`utf16`/`wide`, `windash`, `cidr`, `exists`, `cased`, `gt`/`gte`/`lt`/`lte`, `fieldref`, `expand` with a placeholder map), `and` / `or` / `not`, `1 of selection_*`, `all of them`. Logsource categories map to Chain event types (`process_creation` → `process.start`); unmapped ones become `<product>.<category>`.
 - **Sigma aggregations and correlations** become Chain sequences. Legacy `… | count(F) by G > N` with a `timeframe` converts to a `count:` step grouped by `G` (42 of the 55 real ones in SigmaHQ convert; `near`, `sum()` and `< N` thresholds are reported as unsupported). Correlation rules (`event_count`, `value_count`, `temporal`, `temporal_ordered`) convert to count steps or ordered sequences with the referenced rules' detections as steps; `group-by` lists become a composite `group_by`. The sync pipeline resolves the references in a second pass. You can also embed a Sigma `detection` block in any Chain step via `where: {sigma: ...}`.
-- **YARA** text and regex strings convert to `strings` / `regex` matchers with `any`, `all` or `N of them`. Rules with hex strings, modules or other conditions are **delegated**: kept with their native text so yara-python can run them, with a Chain rule that matches the sensor's `fields.yara_matches`.
+- **YARA** rules are evaluated natively over an event's file content (`fields.content` as latin-1 text or bytes, or `fields.content_b64`, with `fields.size` and the `filename` / `filepath` / `extension` / `filetype` / `owner` externals). Supported: text strings with `nocase` / `wide` / `ascii` / `fullword` / `xor` / `base64` / `base64wide`, hex strings with `??` and nibble wildcards, jumps and alternatives, regex strings with `i` / `s`; conditions with `and` / `or` / `not`, `N of ($x*)` / `them` / `N%`, `$a at` / `in`, `#a`, `@a[i]`, `!a[i]`, `uintN` / `intN` reads, `filesize`, arithmetic, `for … of … : (…)` and `for i in (…) : (…)`, `contains` / `startswith` / `matches` on externals, and references to other rules (resolved across the whole source). Rules that call modules (`pe.`, `math.`, `hash.` …), use `entrypoint`, or put `wide` on a regex are **delegated**: kept with their native text (plus imports and referenced rules) so yara-python can run them, with a Chain rule that matches the sensor's `fields.yara_matches`. A differential test runs the same samples through yara-python and the native evaluator and fails on any disagreement.
 
 ## Sources and the corpus
 
@@ -379,7 +379,7 @@ chain sources status --check-upstream
 chain sources sync sigmahq --update # move the pin to upstream's newest commit, then sync
 ```
 
-The bundled manifests pin SigmaHQ (`sources/sigmahq.yaml`) and Neo23x0's signature-base YARA set (`sources/signature-base.yaml`). Syncing SigmaHQ today gives:
+The bundled manifests pin SigmaHQ (`sources/sigmahq.yaml`) and Neo23x0's signature-base YARA set (`sources/signature-base.yaml`). Syncing them today gives 3,766 of 3,768 Sigma rules exact and 5,618 of 5,904 YARA rules exact (286 delegated to yara-python for module calls). The SigmaHQ report:
 
 ```
 sigmahq @ 8a4813404ea3  license: DRL-1.1
@@ -548,7 +548,7 @@ Chain is becoming one place for the rules, signatures and IOCs that live today i
 |---|---|
 | **Engine core + 1** ✅ | Rule language, taint, tiered matching, counting, "not followed by", replay with precision/recall |
 | **A. Source registry** ✅ | Pin upstream rule repos as sources, sync them into a corpus with origin, license and fidelity per rule |
-| **B. Format coverage** | Full Sigma (correlation, counting), YARA (hex, conditions), Suricata parsing; differential tests against the original engines |
+| **B. Format coverage** | Sigma ✅ and YARA ✅ evaluated natively with fidelity labels; Suricata parsing and engine-level differential testing still open |
 | **C. Context + intent on the corpus** | Taint, baselines and trust overlays on imported rules; trained intent classifiers, real embeddings, built-in judge; agent intent-vs-action as a general mechanism; evasion resistance |
 | **D. IOC layer** | IOC store with expiry, STIX/TAXII and MISP feeds, `ioc:` predicate |
 | **E. Unification + quality** | Merge equivalent rules, quality scores, ATT&CK / ATLAS coverage map, rule lifecycle |

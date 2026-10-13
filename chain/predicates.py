@@ -102,6 +102,14 @@ def check_where(event: Event, where: dict[str, Any], baseline: BaselineStore | N
                 return False, evidence
             evidence.append(f"rare: {field}={event.get(field)!r} seen {n}x for {by}={event.get(by)!r}")
             continue
+        if path == "yara":
+            from .yara import YaraDetection
+
+            det = cond if isinstance(cond, YaraDetection) else YaraDetection(cond["strings"], cond["condition"], cond.get("dependencies"))
+            if not det.matches(event):
+                return False, evidence
+            evidence.append(f"yara rule {det.name or 'matched'}")
+            continue
         if path == "sigma":
             from .importers.sigma import SigmaDetection
 

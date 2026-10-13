@@ -30,10 +30,10 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
-      - run: chain sources sync sigmahq
+      - run: chain sources sync
       - run: chain sources status
-      - run: python -c "from chain import Engine; e = Engine.from_paths('corpus/sigmahq'); print(len(e.rules), 'rules load')"
+      - run: python -c "from chain import Engine; e = Engine.from_paths(['corpus/sigmahq', 'corpus/signature-base']); print(len(e.rules), 'rules load')"
       - uses: actions/upload-artifact@v4
         with:
-          name: corpus-report-sigmahq
-          path: corpus/sigmahq/report.json
+          name: corpus-reports
+          path: corpus/*/report.json

@@ -23,7 +23,8 @@ from typing import Any
 import yaml
 
 from ..importers.sigma import SigmaUnsupported, sigma_import, sigma_import_correlation
-from ..importers.yara import yara_import
+from ..importers.yara import YaraContext, yara_import
+from ..yara import parse_file as parse_yara_file
 from ..rules import Origin, load_rule
 from .safety import check_rule
 from .sources import DEFAULT_CACHE_DIR, DEFAULT_CORPUS_DIR, Source, fetch, now, resolve_head, save_source
@@ -203,7 +204,7 @@ def _origin(src: Source, relp: str, text: str, **kw: Any) -> dict[str, Any]:
     return {k: v for k, v in o.model_dump().items() if v not in (None, "", [], {}) or k in ("notes", "ref")}
 
 
-def _import_file(src: Source, root: Path, path: Path) -> list[tuple[Item, dict[str, Any] | None]]:
+def _import_file(src: Source, root: Path, path: Path, yara_rules: YaraContext | None = None) -> list[tuple[Item, dict[str, Any] | None]]:
     relp = path.relative_to(root).as_posix()
     fmt = _detect_format(path, src.format)
     try:
@@ -214,7 +215,7 @@ def _import_file(src: Source, root: Path, path: Path) -> list[tuple[Item, dict[s
     if fmt == "sigma":
         return [_import_sigma(src, relp, text)]
     if fmt == "yara":
-        return _import_yara(src, relp, text)
+        return _import_yara(src, relp, text, yara_rules)
     if fmt == "chain":
         return [_import_chain(src, relp, text)]
     return [(Item(relp, "skipped", reason="unknown format"), None)]
@@ -267,13 +268,27 @@ def _import_correlation(src: Source, relp: str, doc: dict[str, Any], lookup: dic
     return Item(relp, "imported", rule_id=rule["id"], fidelity=rule["origin"]["fidelity"], notes=list(imp.notes)), rule
 
 
-def _import_yara(src: Source, relp: str, text: str) -> list[tuple[Item, dict[str, Any] | None]]:
+def _all_yara_rules(root: Path, files: list[Path]) -> YaraContext:
+    """Every YARA rule in the source, by name, so cross-file references resolve."""
+    ctx = YaraContext()
+    for p in files:
+        if p.suffix.lower() not in YARA_EXT:
+            continue
+        try:
+            for r in parse_yara_file(p.read_text(encoding="utf-8", errors="replace"))[0]:
+                ctx.add(r)
+        except Exception:  # noqa: BLE001 - reported when the file itself is imported
+            continue
+    return ctx
+
+
+def _import_yara(src: Source, relp: str, text: str, extra: YaraContext | None = None) -> list[tuple[Item, dict[str, Any] | None]]:
     try:
-        imports = yara_import(text)
+        imports = yara_import(text, extra)
     except Exception as e:  # noqa: BLE001
-        return [(Item(relp, "failed", reason=f"parse: {type(e).__name__}: {e}"), None)]
+        return [(Item(relp, "failed", reason=f"parse: {type(e).__name__}: {str(e).splitlines()[0]}"), None)]
     if not imports:
-        return [(Item(relp, "failed", reason="no rules found"), None)]
+        return [(Item(relp, "skipped", reason="no rules in file (commented out?)"), None)]
     out = []
     for imp in imports:
         rule = dict(imp.rule)
@@ -348,8 +363,9 @@ def sync_source(src: Source, corpus_dir: Path = DEFAULT_CORPUS_DIR, cache_dir: P
         report.items.append(item)
 
     deferred: list[Item] = []
+    yara_rules = _all_yara_rules(root, files) if any(p.suffix.lower() in YARA_EXT for p in files) else None
     for path in files:
-        for item, rule in _import_file(src, root, path):
+        for item, rule in _import_file(src, root, path, yara_rules):
             if item.outcome == "deferred":
                 deferred.append(item)
             else:
