@@ -96,6 +96,35 @@ flowchart TB
 
 Dotted arrows mark the escalating content cascade: a costlier tier runs only when a cheaper one is uncertain. The loop closes outside the runtime: triaged verdicts become labeled events, `chain replay` scores every rule against them, and the false positives and misses it reports drive the next rule fix or cluster update. Live state is in-memory today; Redis per tenant and FAISS are the planned swaps.
 
+### In plain terms
+
+Think of Chain as a security guard that reads everything happening on your machines and AI agents and decides whether each action is OK. It has two halves: a **rulebook**, and a **guard who applies it in real time and remembers what it has seen**.
+
+1. **The rulebook** lives in git.
+   - **Rules** are written in YAML, for example: "an email attachment is opened, that file runs, it starts encrypting files, then it talks to the internet: that's ransomware."
+   - **Clusters** are collections of example attacks, such as known prompt-injection phrases, so Chain recognizes similar wording it hasn't seen before.
+   - **Importers** convert existing YARA and Sigma rules, so you keep what you already have.
+2. **The quality check** runs in CI before a rule change goes live.
+   - **validate:** is the rule written correctly?
+   - **test:** does it fire on the examples it should, and stay quiet on the ones it shouldn't?
+   - **fuzz:** if an attacker disguises the attack (encoding it, swapping in look-alike letters, hiding it in a long document), does it still catch it?
+   - **replay:** run against past events, how many does it catch and how many false alarms does it raise?
+
+   Bad rules never reach production.
+3. **The guard** is the runtime engine. Events come from machines (logins, processes, network traffic), from saved files for testing, and from AI agents (what they read, which tools they try to use). For each event it:
+   1. **Unmasks it:** decodes hidden or disguised text so tricks don't work.
+   2. **Tracks where it came from:** "this process came from that suspicious attachment", or "this agent just read an untrusted web page".
+   3. **Checks it against the rules,** step by step, remembering earlier steps. One failed login isn't an attack; five failures followed by a success is.
+   4. **Checks content cheaply first.** A text match costs microseconds. Only if that's unsure does it try smarter checks: similarity to known attacks, then a classifier, and for truly unclear cases an AI judge.
+   5. **Decides:** allow, alert, redact, ask a human, or block.
+4. **The memory** is what makes it dynamic. The guard keeps track of half-finished attack chains, what's normal for each machine, and what's tainted by untrusted sources. The same event can be fine on Monday and suspicious on Tuesday, depending on what came before.
+5. **The result** comes in two forms.
+   - **Alerts** with evidence explaining why they fired, for your security team.
+   - **Blocking** for AI agents: if an agent read a malicious page and then tries to email data out, Chain stops the tool call *before* it runs, or asks a human for approval.
+6. **The learning loop:** your team marks alerts right or wrong. Those labels feed back into replay, which shows which rules are noisy or missing things, so you fix the rule or add examples, and the change goes through the quality check again.
+
+In one line: traditional tools judge each thing on its own by looking for exact text. Chain understands meaning, follows what led to what, remembers context over time, and can stop an AI agent before it does harm, while keeping its rules tested and improving.
+
 ## How it works
 
 ```mermaid
